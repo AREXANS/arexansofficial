@@ -42,7 +42,7 @@ async function syncToSupabase(key: string, value: string) {
       key,
       value,
       updated_at: new Date().toISOString(),
-    });
+    }, { onConflict: 'key' });
   } catch (err) {
     console.warn(`[TokoScriptStore] Failed to sync ${key} to Supabase:`, err);
   }

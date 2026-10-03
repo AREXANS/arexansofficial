@@ -4,7 +4,7 @@ import type { Database } from './types';
 import { brokeredPreviewStorage } from './previewAuthStorage';
 
 const DEFAULT_SUPABASE_URL = "https://caecqqzbikmwroevvyrd.supabase.co";
-const DEFAULT_SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNhZWNxcXpiaWttd3JvZXZ2eXJkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ0Mjk5MzQsImV4cCI6MjEwMDAwNTkzNH0.B0lrXEa8TUc82yW6rGb024TUTyqYI3gMTuE2QU2XDQc";
+const DEFAULT_SUPABASE_KEY = "sb_publishable_CnZ2j0kBnLgok3J8Tu9WAA_kR31dqWL";
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || DEFAULT_SUPABASE_URL;
 const SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || DEFAULT_SUPABASE_KEY;

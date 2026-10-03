@@ -84,19 +84,21 @@ export const saveMaintenanceState = async (state: MaintenanceState): Promise<voi
   } catch {}
 
   try {
-    await supabase.from('app_settings').upsert({
+    const { error: err1 } = await supabase.from('app_settings').upsert({
       key: 'product_maintenance_state',
       value: json,
       updated_at: new Date().toISOString(),
-    });
+    }, { onConflict: 'key' });
+    if (err1) console.error('[MaintenanceStore] Failed to save product_maintenance_state:', err1);
 
     // Sync maintenance_mode: true if global OR arexans tools is in maintenance
     const isToolsUnderMaintenance = Boolean(state.globalMaintenance || state.arexansToolsMaintenance);
-    await supabase.from('app_settings').upsert({
+    const { error: err2 } = await supabase.from('app_settings').upsert({
       key: 'maintenance_mode',
       value: isToolsUnderMaintenance ? 'true' : 'false',
       updated_at: new Date().toISOString(),
-    });
+    }, { onConflict: 'key' });
+    if (err2) console.error('[MaintenanceStore] Failed to save maintenance_mode:', err2);
   } catch (err) {
     console.error('[MaintenanceStore] Failed to save state to Supabase:', err);
   }

@@ -225,22 +225,26 @@ const Admin = () => {
       await saveMaintenanceState(nextState);
       setMaintenanceState(nextState);
 
-      if (checked) {
-        const res = await freezeProductKeys('all');
-        toast({
-          title: '🔴 Maintenance SEMUANYA Aktif',
-          description: `Seluruh produk dikunci untuk publik & ${res.count} key aktif dibekukan sementara agar pembeli tidak rugi.`,
-        });
-      } else {
-        const res = await unfreezeProductKeys('all');
-        toast({
-          title: '🟢 Maintenance Selesai',
-          description: `Semua produk dibuka kembali normal & ${res.count} key aktif dilanjutkan kembali secara utuh.`,
-        });
+      try {
+        if (checked) {
+          const res = await freezeProductKeys('all');
+          toast({
+            title: '🔴 Mode Maintenance Sistem: AKTIF',
+            description: `Seluruh produk dikunci untuk publik & ${res?.count || 0} key aktif dibekukan sementara agar pembeli tidak rugi.`,
+          });
+        } else {
+          const res = await unfreezeProductKeys('all');
+          toast({
+            title: '🟢 Mode Maintenance Sistem: NONAKTIF',
+            description: `Semua produk dibuka kembali normal & ${res?.count || 0} key aktif dilanjutkan kembali secara utuh.`,
+          });
+        }
+      } catch (keyErr) {
+        console.warn('Key freeze/unfreeze notice:', keyErr);
       }
       await loadMaintenanceAndKeys();
     } catch (err: any) {
-      toast({ title: 'Gagal', description: err.message, variant: 'destructive' });
+      toast({ title: 'Gagal', description: err.message || 'Terjadi kesalahan sistem', variant: 'destructive' });
     } finally {
       setMaintenanceLoading(false);
     }
@@ -257,22 +261,26 @@ const Admin = () => {
       await saveMaintenanceState(nextState);
       setMaintenanceState(nextState);
 
-      if (checked) {
-        const res = await freezeProductKeys('arexans_tools');
-        toast({
-          title: '🔴 Arexans Tools Maintenance',
-          description: `Pembelian Arexans Tools dikunci & ${res.count} key dibekukan sementara.`,
-        });
-      } else {
-        const res = await unfreezeProductKeys('arexans_tools');
-        toast({
-          title: '🟢 Arexans Tools Normal',
-          description: `Pembelian Arexans Tools dibuka kembali & ${res.count} key dilanjutkan.`,
-        });
+      try {
+        if (checked) {
+          const res = await freezeProductKeys('arexans_tools');
+          toast({
+            title: '🔴 Arexans Tools Maintenance',
+            description: `Pembelian Arexans Tools dikunci & ${res?.count || 0} key dibekukan sementara.`,
+          });
+        } else {
+          const res = await unfreezeProductKeys('arexans_tools');
+          toast({
+            title: '🟢 Arexans Tools Normal',
+            description: `Pembelian Arexans Tools dibuka kembali & ${res?.count || 0} key dilanjutkan.`,
+          });
+        }
+      } catch (keyErr) {
+        console.warn('Key freeze/unfreeze notice:', keyErr);
       }
       await loadMaintenanceAndKeys();
     } catch (err: any) {
-      toast({ title: 'Gagal', description: err.message, variant: 'destructive' });
+      toast({ title: 'Gagal', description: err.message || 'Terjadi kesalahan sistem', variant: 'destructive' });
     } finally {
       setMaintenanceLoading(false);
     }
@@ -289,22 +297,26 @@ const Admin = () => {
       await saveMaintenanceState(nextState);
       setMaintenanceState(nextState);
 
-      if (checked) {
-        const res = await freezeProductKeys('toko_script');
-        toast({
-          title: '🔴 Toko Script Maintenance',
-          description: `Seluruh Toko Script dikunci untuk publik & ${res.count} key dibekukan.`,
-        });
-      } else {
-        const res = await unfreezeProductKeys('toko_script');
-        toast({
-          title: '🟢 Toko Script Normal',
-          description: `Katalog Toko Script dibuka kembali & ${res.count} key dilanjutkan.`,
-        });
+      try {
+        if (checked) {
+          const res = await freezeProductKeys('toko_script');
+          toast({
+            title: '🔴 Toko Script Maintenance',
+            description: `Seluruh Toko Script dikunci untuk publik & ${res?.count || 0} key dibekukan.`,
+          });
+        } else {
+          const res = await unfreezeProductKeys('toko_script');
+          toast({
+            title: '🟢 Toko Script Normal',
+            description: `Katalog Toko Script dibuka kembali & ${res?.count || 0} key dilanjutkan.`,
+          });
+        }
+      } catch (keyErr) {
+        console.warn('Key freeze/unfreeze notice:', keyErr);
       }
       await loadMaintenanceAndKeys();
     } catch (err: any) {
-      toast({ title: 'Gagal', description: err.message, variant: 'destructive' });
+      toast({ title: 'Gagal', description: err.message || 'Terjadi kesalahan sistem', variant: 'destructive' });
     } finally {
       setMaintenanceLoading(false);
     }

@@ -258,13 +258,13 @@ export const TokoScriptAdmin: React.FC = () => {
         const res = await freezeProductKeys('all');
         toast({
           title: 'Produk Dikunci Maintenance',
-          description: `Script "${prod.title}" dikunci. ${res.count} key pelanggan dibekukan sementara agar tidak rugi.`,
+          description: `Script "${prod.title}" dikunci. ${res?.count || 0} key pelanggan dibekukan sementara agar tidak rugi.`,
         });
       } else {
         const res = await unfreezeProductKeys('all');
         toast({
           title: 'Maintenance Selesai',
-          description: `Script "${prod.title}" dibuka kembali normal. ${res.count} key aktif dilanjutkan secara utuh.`,
+          description: `Script "${prod.title}" dibuka kembali normal. ${res?.count || 0} key aktif dilanjutkan secara utuh.`,
         });
       }
 
@@ -377,13 +377,13 @@ export const TokoScriptAdmin: React.FC = () => {
             const res = await freezeProductKeys('all');
             toast({
               title: 'Script Dikunci Maintenance',
-              description: `Script "${formTitle.trim()}" dikunci. ${res.count} key pelanggan dibekukan sementara agar tidak rugi.`,
+              description: `Script "${formTitle.trim()}" dikunci. ${res?.count || 0} key pelanggan dibekukan sementara agar tidak rugi.`,
             });
           } else {
             const res = await unfreezeProductKeys('all');
             toast({
               title: 'Maintenance Selesai',
-              description: `Script "${formTitle.trim()}" dibuka normal. ${res.count} key dilanjutkan durasinya secara utuh.`,
+              description: `Script "${formTitle.trim()}" dibuka normal. ${res?.count || 0} key dilanjutkan durasinya secara utuh.`,
             });
           }
         } else {
