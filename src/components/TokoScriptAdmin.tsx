@@ -75,12 +75,14 @@ import {
   Terminal,
   Copy,
   ExternalLink,
+  Key,
 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { freezeProductKeys, unfreezeProductKeys } from '@/lib/maintenanceStore';
+import { TokoScriptKeyManagement } from './TokoScriptKeyManagement';
 
 export const TokoScriptAdmin: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'products' | 'resellers' | 'withdrawals'>('products');
+  const [activeTab, setActiveTab] = useState<'products' | 'keysystem' | 'resellers' | 'withdrawals'>('products');
   const [products, setProducts] = useState<TokoScriptProduct[]>([]);
   const [resellers, setResellers] = useState<ResellerAccount[]>([]);
   const [withdrawals, setWithdrawals] = useState<CommissionWithdrawal[]>([]);
@@ -581,6 +583,10 @@ export const TokoScriptAdmin: React.FC = () => {
             <ShoppingBag className="w-3.5 h-3.5" />
             Produk Toko Script ({products.length})
           </TabsTrigger>
+          <TabsTrigger value="keysystem" className="text-xs gap-1.5 rounded-lg">
+            <Key className="w-3.5 h-3.5 text-primary" />
+            Key System Script
+          </TabsTrigger>
           <TabsTrigger value="resellers" className="text-xs gap-1.5 rounded-lg">
             <Users className="w-3.5 h-3.5" />
             Mitra Reseller ({resellers.length})
@@ -790,7 +796,12 @@ export const TokoScriptAdmin: React.FC = () => {
           )}
         </TabsContent>
 
-        {/* TAB 2: RESELLERS */}
+        {/* TAB 2: KEY SYSTEM TOKO SCRIPT (Strict 1 Key = 1 Product) */}
+        <TabsContent value="keysystem" className="space-y-4">
+          <TokoScriptKeyManagement products={products} />
+        </TabsContent>
+
+        {/* TAB 3: RESELLERS */}
         <TabsContent value="resellers" className="space-y-4">
           {/* Global Reseller Settings Card */}
           <div className="glass-card p-5 rounded-2xl border-primary/30 bg-primary/5 space-y-4">

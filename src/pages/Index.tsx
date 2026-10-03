@@ -218,12 +218,19 @@ const Index = () => {
     const checkMaintenance = async () => {
       try {
         const mState = await getMaintenanceState();
-        setIsMaintenance(Boolean(mState.globalMaintenance || mState.arexansToolsMaintenance));
+        setIsMaintenance(Boolean(mState.globalMaintenance));
       } catch {
-        const { data } = await supabase.from('app_settings').select('value').eq('key', 'maintenance_mode').single();
+        const { data } = await supabase.from('app_settings').select('value').eq('key', 'maintenance_mode').maybeSingle();
         if (data) setIsMaintenance(data.value === 'true');
       }
     };
+
+    const handleMaintenanceChange = () => {
+      checkMaintenance();
+    };
+
+    window.addEventListener('maintenance_state_changed', handleMaintenanceChange);
+    window.addEventListener('storage', handleMaintenanceChange);
 
     const loadGateway = async () => {
       const { data } = await supabase
@@ -244,7 +251,11 @@ const Index = () => {
     checkMaintenance();
     loadGateway();
     const heartbeatPoll = setInterval(loadGateway, 15000);
-    return () => clearInterval(heartbeatPoll);
+    return () => {
+      clearInterval(heartbeatPoll);
+      window.removeEventListener('maintenance_state_changed', handleMaintenanceChange);
+      window.removeEventListener('storage', handleMaintenanceChange);
+    };
   }, []);
 
   const formatRupiah = (number: number) => {

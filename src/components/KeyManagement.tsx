@@ -730,8 +730,11 @@ const KeyManagement: FC<KeyManagementProps> = ({ onRefresh }) => {
           <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
             <h2 className="text-lg md:text-xl font-display font-semibold flex items-center gap-2">
               <Key className="w-5 h-5 text-primary" />
-              License Keys
+              License Keys Arexans Tools
             </h2>
+            <span className="text-xs px-2 py-0.5 rounded-full bg-primary/20 text-primary border border-primary/30 font-semibold">
+              Kunci Utama Arexans Tools
+            </span>
             <span className="text-xs sm:text-sm text-muted-foreground">
               Total: {keys.length} | Aktif: {activeCount} | Frozen: {frozenCount} | Expired: {expiredCount}
             </span>

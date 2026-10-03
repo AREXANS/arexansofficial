@@ -91,6 +91,70 @@ async function createLicenseKey(supabase: any, transaction: any) {
     const key = transaction.license_key;
     if (!key) return;
 
+    const isTokoScript = (
+      (transaction.customer_name || '').includes('Toko Script') ||
+      (transaction.package_name || '').startsWith('SCRIPT_')
+    );
+
+    if (isTokoScript) {
+      // Save specifically to Toko Script Keys
+      const { data: tData } = await supabase
+        .from("app_settings")
+        .select("value")
+        .eq("key", "toko_scripts_keys_data")
+        .maybeSingle();
+
+      let tKeys = [];
+      if (tData) {
+        try { tKeys = JSON.parse(tData.value || "[]"); } catch { tKeys = []; }
+      }
+
+      const existingTIdx = tKeys.findIndex((k: any) => k.key.toUpperCase() === key.toUpperCase());
+      const expiryDate = new Date();
+      expiryDate.setDate(expiryDate.getDate() + (Number(transaction.package_duration) || 30));
+
+      if (existingTIdx >= 0) {
+        const existing = tKeys[existingTIdx];
+        const currentExp = new Date(existing.expired);
+        const now = new Date();
+        const baseDate = currentExp > now ? currentExp : now;
+        baseDate.setDate(baseDate.getDate() + (Number(transaction.package_duration) || 30));
+        tKeys[existingTIdx].expired = baseDate.toISOString();
+        tKeys[existingTIdx].transactionId = transaction.transaction_id;
+      } else {
+        tKeys.unshift({
+          id: 'tsk_' + Math.random().toString(36).slice(2, 10),
+          key,
+          productId: transaction.package_name || 'unknown_script',
+          productTitle: transaction.package_name || 'Toko Script',
+          role: transaction.package_name || 'VIP',
+          durationDays: Number(transaction.package_duration) || 30,
+          createdAt: new Date().toISOString(),
+          expired: expiryDate.toISOString(),
+          maxHwid: 1,
+          hwids: [],
+          robloxUsers: [],
+          frozenUntil: null,
+          frozenRemainingMs: null,
+          customerName: transaction.customer_name || 'Buyer',
+          transactionId: transaction.transaction_id,
+        });
+      }
+
+      await supabase
+        .from("app_settings")
+        .upsert({
+          key: "toko_scripts_keys_data",
+          value: JSON.stringify(tKeys),
+          updated_at: new Date().toISOString(),
+          description: "Database License Keys Toko Script",
+        }, { onConflict: "key" });
+
+      console.log(`Toko script key ${key} saved successfully`);
+      return;
+    }
+
+    // Default: Arexans Tools key
     const { data } = await supabase
       .from("app_settings")
       .select("value")

@@ -24,7 +24,7 @@ serve(async (req) => {
   }
 
   try {
-    const { key, hwid, robloxUsername } = await req.json();
+    const { key, hwid, robloxUsername, productId, productRawId } = await req.json();
 
     if (!key) {
       return new Response(
@@ -33,10 +33,153 @@ serve(async (req) => {
       );
     }
 
+    const cleanKey = String(key).trim().toUpperCase();
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
+    const now = new Date();
 
+    // 1. IF PRODUCT ID IS PROVIDED, CHECK TOKO SCRIPT KEYS FIRST
+    if (productId || cleanKey.startsWith("TS-")) {
+      const { data: tokoSetting } = await supabase
+        .from("app_settings")
+        .select("value")
+        .eq("key", "toko_scripts_keys_data")
+        .maybeSingle();
+
+      let tokoKeys: any[] = [];
+      if (tokoSetting?.value) {
+        try { tokoKeys = JSON.parse(tokoSetting.value); } catch {}
+      }
+
+      const foundTokoKey = tokoKeys.find((k: any) => (k.key || "").toUpperCase() === cleanKey);
+
+      if (foundTokoKey) {
+        // STRICT CHECK: 1 Key = 1 Product Purchased
+        if (productId) {
+          const target = String(productId).trim().toLowerCase();
+          const targetRaw = productRawId ? String(productRawId).trim().toLowerCase() : "";
+          const keyProd = String(foundTokoKey.productId || "").trim().toLowerCase();
+          const keyRaw = String(foundTokoKey.productRawId || "").trim().toLowerCase();
+
+          const isMatch = (
+            keyProd === target ||
+            (targetRaw && keyProd === targetRaw) ||
+            (keyRaw && (keyRaw === target || keyRaw === targetRaw))
+          );
+
+          if (!isMatch) {
+            return new Response(
+              JSON.stringify({
+                success: false,
+                valid: false,
+                error: `Akses Ditolak: Key "${cleanKey}" HANYA BERLAKU untuk produk "${foundTokoKey.productTitle}". Tidak dapat dipakai di script ini!`,
+              }),
+              { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+          }
+        }
+
+        // Check if frozen
+        if (foundTokoKey.frozenUntil) {
+          return new Response(
+            JSON.stringify({
+              success: false,
+              valid: false,
+              error: `Key sedang dibekukan sementara karena script sedang dalam perbaikan (maintenance). Sisa durasi aman.`,
+              frozen: true,
+            }),
+            { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+
+        // Check expired
+        if (!foundTokoKey.isLifetime && new Date(foundTokoKey.expired) < now) {
+          return new Response(
+            JSON.stringify({
+              success: false,
+              valid: false,
+              error: `Key untuk "${foundTokoKey.productTitle}" telah kadaluarsa (expired). Silakan perpanjang di web.`,
+              expired: true,
+            }),
+            { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+
+        // Check HWID quota
+        const maxHwid = foundTokoKey.maxHwid || 1;
+        const currentHwids: string[] = foundTokoKey.hwids || [];
+        if (hwid && !currentHwids.includes(hwid)) {
+          if (currentHwids.length >= maxHwid) {
+            return new Response(
+              JSON.stringify({
+                success: false,
+                valid: false,
+                hwid_limit_reached: true,
+                error: `Batas perangkat tercapai (${currentHwids.length}/${maxHwid} HWID). Beli slot HWID tambahan di web.`,
+              }),
+              { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+          }
+
+          // Register HWID
+          currentHwids.push(hwid);
+          foundTokoKey.hwids = currentHwids;
+          foundTokoKey.robloxUsers = foundTokoKey.robloxUsers || [];
+          foundTokoKey.robloxUsers.push({
+            hwid,
+            username: robloxUsername || "Roblox Player",
+            registeredAt: now.toISOString(),
+          });
+
+          await supabase
+            .from("app_settings")
+            .update({ value: JSON.stringify(tokoKeys), updated_at: now.toISOString() })
+            .eq("key", "toko_scripts_keys_data");
+        }
+
+        return new Response(
+          JSON.stringify({
+            success: true,
+            valid: true,
+            key: foundTokoKey.key,
+            role: foundTokoKey.role || "Member",
+            productTitle: foundTokoKey.productTitle,
+            expired: foundTokoKey.expired,
+            hwids: foundTokoKey.hwids,
+            maxHwid: foundTokoKey.maxHwid,
+          }),
+          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      // Check if it's an ArexansTools key
+      if (productId) {
+        const { data: axsSetting } = await supabase
+          .from("app_settings")
+          .select("value")
+          .eq("key", "license_keys")
+          .maybeSingle();
+
+        if (axsSetting?.value) {
+          try {
+            const axsKeys: any[] = JSON.parse(axsSetting.value);
+            if (axsKeys.some((k: any) => (k.key || "").toUpperCase() === cleanKey)) {
+              return new Response(
+                JSON.stringify({
+                  success: false,
+                  valid: false,
+                  error: "Akses Ditolak: Key Arexans Tools TIDAK DAPAT digunakan pada Toko Script! Setiap produk script memerlukan key tersendiri.",
+                }),
+                { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+              );
+            }
+          } catch {}
+        }
+      }
+    }
+
+    // 2. CHECK AREXANS TOOLS KEYS (license_keys)
     const { data: settingData, error: settingError } = await supabase
       .from("app_settings")
       .select("value")

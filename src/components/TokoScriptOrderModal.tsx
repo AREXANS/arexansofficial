@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { TokoScriptProduct, ScriptPackage } from '@/types/tokoScript';
 import { getScriptRawId } from '@/lib/tokoScriptStore';
+import { createTokoScriptKey } from '@/lib/tokoScriptKeyStore';
 import { getMaintenanceState, isDeveloperTesting } from '@/lib/maintenanceStore';
 import { supabase } from '@/integrations/supabase/client';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
@@ -144,6 +145,24 @@ export const TokoScriptOrderModal: React.FC<TokoScriptOrderModalProps> = ({
         });
       } catch (dbErr) {
         console.warn('Could not insert directly to transactions table:', dbErr);
+      }
+
+      // Pre-register key into dedicated Toko Script Key System (strictly bound to this product)
+      try {
+        await createTokoScriptKey({
+          key: cleanKey,
+          productId: product.id,
+          productTitle: product.title,
+          productRawId: getScriptRawId(product),
+          role: selectedPackage.name,
+          durationDays: selectedPackage.days,
+          maxHwid: 1,
+          customerName: `Order Web (${cleanKey})`,
+          transactionId: txId,
+          isLifetime: selectedPackage.days >= 9999,
+        });
+      } catch (keyErr) {
+        console.warn('Could not pre-register toko script key:', keyErr);
       }
 
       // If reseller code is present, record the sale

@@ -119,8 +119,22 @@ const PackageSelection: FC<PackageSelectionProps> = ({
   const [isDevMode, setIsDevMode] = useState(false);
 
   useEffect(() => {
-    setIsDevMode(isDeveloperTesting());
-    getMaintenanceState().then(setMaintenanceState);
+    const updateState = () => {
+      setIsDevMode(isDeveloperTesting());
+      getMaintenanceState().then(setMaintenanceState);
+    };
+
+    updateState();
+
+    window.addEventListener('maintenance_state_changed', updateState);
+    window.addEventListener('dev_testing_bypass_changed', updateState);
+    window.addEventListener('storage', updateState);
+
+    return () => {
+      window.removeEventListener('maintenance_state_changed', updateState);
+      window.removeEventListener('dev_testing_bypass_changed', updateState);
+      window.removeEventListener('storage', updateState);
+    };
   }, []);
 
   useEffect(() => {

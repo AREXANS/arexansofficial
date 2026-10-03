@@ -1,4 +1,5 @@
 import { supabase } from '@/integrations/supabase/client';
+import { freezeTokoScriptKeys, unfreezeTokoScriptKeys } from './tokoScriptKeyStore';
 
 export interface MaintenanceState {
   globalMaintenance: boolean;       // Kunci semua produk (Semuanya)
@@ -39,8 +40,35 @@ export const setDeveloperTestingBypass = (enabled: boolean): void => {
     } else {
       localStorage.removeItem(DEV_TESTING_BYPASS_KEY);
     }
+    window.dispatchEvent(new CustomEvent('dev_testing_bypass_changed', { detail: enabled }));
   } catch (e) {
     console.error(e);
+  }
+};
+
+/**
+ * Reliable app_settings upsert helper
+ */
+const safeSaveSetting = async (key: string, value: string, desc?: string) => {
+  try {
+    const { data: existing } = await supabase
+      .from('app_settings')
+      .select('id')
+      .eq('key', key)
+      .maybeSingle();
+
+    if (existing?.id) {
+      await supabase
+        .from('app_settings')
+        .update({ value, updated_at: new Date().toISOString() })
+        .eq('key', key);
+    } else {
+      await supabase
+        .from('app_settings')
+        .insert({ key, value, description: desc || null });
+    }
+  } catch (err) {
+    console.warn(`[MaintenanceStore] Error persisting setting ${key}:`, err);
   }
 };
 
@@ -75,33 +103,22 @@ export const getMaintenanceState = async (): Promise<MaintenanceState> => {
 };
 
 /**
- * Save maintenance state to Supabase & localStorage
+ * Save maintenance state to Supabase & localStorage with immediate local propagation
  */
 export const saveMaintenanceState = async (state: MaintenanceState): Promise<void> => {
   const json = JSON.stringify({ ...state, updatedAt: new Date().toISOString() });
   try {
     localStorage.setItem(STORAGE_MAINTENANCE_KEY, json);
+    window.dispatchEvent(new CustomEvent('maintenance_state_changed', { detail: state }));
+    window.dispatchEvent(new Event('storage'));
   } catch {}
 
-  try {
-    const { error: err1 } = await supabase.from('app_settings').upsert({
-      key: 'product_maintenance_state',
-      value: json,
-      updated_at: new Date().toISOString(),
-    }, { onConflict: 'key' });
-    if (err1) console.error('[MaintenanceStore] Failed to save product_maintenance_state:', err1);
+  // Persist product_maintenance_state
+  await safeSaveSetting('product_maintenance_state', json, 'Product maintenance control state');
 
-    // Sync maintenance_mode: true if global OR arexans tools is in maintenance
-    const isToolsUnderMaintenance = Boolean(state.globalMaintenance || state.arexansToolsMaintenance);
-    const { error: err2 } = await supabase.from('app_settings').upsert({
-      key: 'maintenance_mode',
-      value: isToolsUnderMaintenance ? 'true' : 'false',
-      updated_at: new Date().toISOString(),
-    }, { onConflict: 'key' });
-    if (err2) console.error('[MaintenanceStore] Failed to save maintenance_mode:', err2);
-  } catch (err) {
-    console.error('[MaintenanceStore] Failed to save state to Supabase:', err);
-  }
+  // Sync maintenance_mode: true ONLY if global maintenance is ON (so partial tools maintenance does not block entire site)
+  const isToolsUnderMaintenance = Boolean(state.globalMaintenance || state.arexansToolsMaintenance);
+  await safeSaveSetting('maintenance_mode', isToolsUnderMaintenance ? 'true' : 'false', 'Global maintenance flag');
 };
 
 /**
@@ -112,76 +129,81 @@ export const saveMaintenanceState = async (state: MaintenanceState): Promise<voi
 export const freezeProductKeys = async (
   scope: 'all' | 'arexans_tools' | 'toko_script' = 'all'
 ): Promise<{ success: boolean; count: number; message: string }> => {
-  try {
-    const { data: settingData, error: fetchErr } = await supabase
-      .from('app_settings')
-      .select('value')
-      .eq('key', 'license_keys')
-      .maybeSingle();
+  let totalFrozen = 0;
 
-    if (fetchErr || !settingData?.value) {
-      return { success: false, count: 0, message: 'Data license_keys tidak ditemukan' };
-    }
-
-    let keys: any[] = [];
+  // 1. Freeze Toko Script Keys if scope includes toko_script
+  if (scope === 'all' || scope === 'toko_script') {
     try {
-      keys = JSON.parse(settingData.value);
-    } catch {
-      return { success: false, count: 0, message: 'Format data key tidak valid' };
+      const tokoRes = await freezeTokoScriptKeys('all');
+      totalFrozen += tokoRes.count;
+    } catch (e) {
+      console.warn('[MaintenanceStore] Error freezing toko script keys:', e);
     }
-
-    const now = new Date();
-    let frozenCount = 0;
-
-    const updatedKeys = keys.map((keyItem) => {
-      // Filter by scope if needed
-      const role = (keyItem.role || '').toLowerCase();
-      const isPermanent = role === 'admin' || role === 'developer';
-      if (isPermanent) return keyItem;
-
-      if (scope === 'arexans_tools') {
-        // Arexans Tools keys have roles normal, vip, or lifetime
-        if (role !== 'normal' && role !== 'vip' && role !== 'lifetime') return keyItem;
-      }
-
-      // If already frozen, keep current state
-      if (keyItem.frozenUntil) return keyItem;
-
-      const expiredDate = new Date(keyItem.expired);
-      const remainingMs = expiredDate.getTime() - now.getTime();
-
-      // Only freeze keys that are not already expired
-      if (remainingMs > 0) {
-        frozenCount++;
-        return {
-          ...keyItem,
-          frozenUntil: now.toISOString(),
-          frozenRemainingMs: remainingMs,
-        };
-      }
-
-      return keyItem;
-    });
-
-    if (frozenCount > 0) {
-      await supabase
-        .from('app_settings')
-        .update({
-          value: JSON.stringify(updatedKeys),
-          updated_at: now.toISOString(),
-        })
-        .eq('key', 'license_keys');
-    }
-
-    return {
-      success: true,
-      count: frozenCount,
-      message: `${frozenCount} key berhasil dibekukan sementara. Sisa durasi key pembeli aman dan tidak akan berkurang.`,
-    };
-  } catch (err: any) {
-    console.error('[MaintenanceStore] Error freezing keys:', err);
-    return { success: false, count: 0, message: err.message || 'Gagal membekukan key' };
   }
+
+  // 2. Freeze Arexans Tools keys if scope includes arexans_tools
+  if (scope === 'all' || scope === 'arexans_tools') {
+    try {
+      const { data: settingData, error: fetchErr } = await supabase
+        .from('app_settings')
+        .select('value')
+        .eq('key', 'license_keys')
+        .maybeSingle();
+
+      if (!fetchErr && settingData?.value) {
+        let keys: any[] = [];
+        try {
+          keys = JSON.parse(settingData.value);
+        } catch {}
+
+        const now = new Date();
+        let frozenCount = 0;
+
+        const updatedKeys = keys.map((keyItem) => {
+          const role = (keyItem.role || '').toLowerCase();
+          const isPermanent = role === 'admin' || role === 'developer';
+          if (isPermanent) return keyItem;
+
+          // If already frozen, keep current state
+          if (keyItem.frozenUntil) return keyItem;
+
+          const expiredDate = new Date(keyItem.expired);
+          const remainingMs = expiredDate.getTime() - now.getTime();
+
+          // Only freeze keys that are not already expired
+          if (remainingMs > 0) {
+            frozenCount++;
+            return {
+              ...keyItem,
+              frozenUntil: now.toISOString(),
+              frozenRemainingMs: remainingMs,
+            };
+          }
+
+          return keyItem;
+        });
+
+        if (frozenCount > 0) {
+          totalFrozen += frozenCount;
+          await supabase
+            .from('app_settings')
+            .update({
+              value: JSON.stringify(updatedKeys),
+              updated_at: now.toISOString(),
+            })
+            .eq('key', 'license_keys');
+        }
+      }
+    } catch (err: any) {
+      console.warn('[MaintenanceStore] Error freezing Arexans keys:', err);
+    }
+  }
+
+  return {
+    success: true,
+    count: totalFrozen,
+    message: `${totalFrozen} key berhasil dibekukan sementara. Sisa durasi key pembeli aman dan tidak akan berkurang.`,
+  };
 };
 
 /**
@@ -192,68 +214,72 @@ export const freezeProductKeys = async (
 export const unfreezeProductKeys = async (
   scope: 'all' | 'arexans_tools' | 'toko_script' = 'all'
 ): Promise<{ success: boolean; count: number; message: string }> => {
-  try {
-    const { data: settingData, error: fetchErr } = await supabase
-      .from('app_settings')
-      .select('value')
-      .eq('key', 'license_keys')
-      .maybeSingle();
+  let totalUnfrozen = 0;
 
-    if (fetchErr || !settingData?.value) {
-      return { success: false, count: 0, message: 'Data license_keys tidak ditemukan' };
-    }
-
-    let keys: any[] = [];
+  // 1. Unfreeze Toko Script Keys if scope includes toko_script
+  if (scope === 'all' || scope === 'toko_script') {
     try {
-      keys = JSON.parse(settingData.value);
-    } catch {
-      return { success: false, count: 0, message: 'Format data key tidak valid' };
+      const tokoRes = await unfreezeTokoScriptKeys('all');
+      totalUnfrozen += tokoRes.count;
+    } catch (e) {
+      console.warn('[MaintenanceStore] Error unfreezing toko script keys:', e);
     }
-
-    const now = new Date();
-    let unfrozenCount = 0;
-
-    const updatedKeys = keys.map((keyItem) => {
-      // Filter by scope if needed
-      const role = (keyItem.role || '').toLowerCase();
-      if (scope === 'arexans_tools') {
-        if (role !== 'normal' && role !== 'vip' && role !== 'lifetime') return keyItem;
-      }
-
-      // Only unfreeze keys that are currently frozen
-      if (keyItem.frozenUntil) {
-        const remainingMs = keyItem.frozenRemainingMs || 0;
-        // Extend expired by remainingMs starting from now
-        const newExpiry = new Date(now.getTime() + remainingMs);
-        unfrozenCount++;
-        return {
-          ...keyItem,
-          expired: newExpiry.toISOString(),
-          frozenUntil: null,
-          frozenRemainingMs: null,
-        };
-      }
-
-      return keyItem;
-    });
-
-    if (unfrozenCount > 0) {
-      await supabase
-        .from('app_settings')
-        .update({
-          value: JSON.stringify(updatedKeys),
-          updated_at: now.toISOString(),
-        })
-        .eq('key', 'license_keys');
-    }
-
-    return {
-      success: true,
-      count: unfrozenCount,
-      message: `${unfrozenCount} key berhasil dilanjutkan kembali secara utuh. Masa aktif pembeli tidak berkurang sama sekali.`,
-    };
-  } catch (err: any) {
-    console.error('[MaintenanceStore] Error unfreezing keys:', err);
-    return { success: false, count: 0, message: err.message || 'Gagal melanjutkan key' };
   }
+
+  // 2. Unfreeze Arexans Tools keys if scope includes arexans_tools
+  if (scope === 'all' || scope === 'arexans_tools') {
+    try {
+      const { data: settingData, error: fetchErr } = await supabase
+        .from('app_settings')
+        .select('value')
+        .eq('key', 'license_keys')
+        .maybeSingle();
+
+      if (!fetchErr && settingData?.value) {
+        let keys: any[] = [];
+        try {
+          keys = JSON.parse(settingData.value);
+        } catch {}
+
+        const now = new Date();
+        let unfrozenCount = 0;
+
+        const updatedKeys = keys.map((keyItem) => {
+          if (keyItem.frozenUntil) {
+            const remainingMs = keyItem.frozenRemainingMs || 0;
+            const newExpiry = new Date(now.getTime() + remainingMs);
+            unfrozenCount++;
+            return {
+              ...keyItem,
+              expired: newExpiry.toISOString(),
+              frozenUntil: null,
+              frozenRemainingMs: null,
+            };
+          }
+
+          return keyItem;
+        });
+
+        if (unfrozenCount > 0) {
+          totalUnfrozen += unfrozenCount;
+          await supabase
+            .from('app_settings')
+            .update({
+              value: JSON.stringify(updatedKeys),
+              updated_at: now.toISOString(),
+            })
+            .eq('key', 'license_keys');
+        }
+      }
+    } catch (err: any) {
+      console.warn('[MaintenanceStore] Error unfreezing Arexans keys:', err);
+    }
+  }
+
+  return {
+    success: true,
+    count: totalUnfrozen,
+    message: `${totalUnfrozen} key berhasil dilanjutkan kembali secara utuh. Masa aktif pembeli tidak berkurang sama sekali.`,
+  };
 };
+

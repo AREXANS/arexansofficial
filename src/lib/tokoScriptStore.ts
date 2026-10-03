@@ -212,6 +212,8 @@ end
 local VALIDATE_URL = "${domain}/api/validate-key"
 local payload = HttpService:JSONEncode({
     key = KEY,
+    productId = "${scriptId}",
+    productTitle = "${title.replace(/"/g, '\\"')}",
     hwid = HWID,
     robloxUsername = USERNAME
 })

@@ -10,6 +10,149 @@ function publicRawScriptPlugin() {
       server.middlewares.use(async (req: any, res: any, next: any) => {
         const urlStr = req.url || '';
         const pathname = urlStr.split('?')[0] || '';
+
+        // API Endpoint: /api/validate-key and /api/validate-toko-script-key
+        if (pathname === '/api/validate-key' || pathname === '/api/validate-toko-script-key') {
+          res.setHeader('Access-Control-Allow-Origin', '*');
+          res.setHeader('Access-Control-Allow-Headers', '*');
+          res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+          if (req.method === 'OPTIONS') {
+            res.statusCode = 204;
+            return res.end();
+          }
+
+          let bodyStr = '';
+          req.on('data', (chunk: any) => { bodyStr += chunk; });
+          req.on('end', async () => {
+            try {
+              const body = JSON.parse(bodyStr || '{}');
+              const key = (body.key || '').trim().toUpperCase();
+              const productId = (body.productId || body.productRawId || '').trim();
+              const hwid = (body.hwid || '').trim();
+              const robloxUsername = (body.robloxUsername || 'Unknown').trim();
+
+              const supabaseUrl = 'https://caecqqzbikmwroevvyrd.supabase.co';
+              const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNhZWNxcXpiaWttd3JvZXZ2eXJkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ0Mjk5MzQsImV4cCI6MjEwMDAwNTkzNH0.B0lrXEa8TUc82yW6rGb024TUTyqYI3gMTuE2QU2XDQc';
+
+              // Fetch toko script keys
+              const resp = await fetch(`${supabaseUrl}/rest/v1/app_settings?select=value&key=eq.toko_scripts_keys_data`, {
+                headers: { 'apikey': supabaseKey, 'Authorization': `Bearer ${supabaseKey}` }
+              });
+              const data = await resp.json();
+              let keys: any[] = [];
+              if (data && data[0]?.value) {
+                try { keys = JSON.parse(data[0].value); } catch {}
+              }
+
+              const foundKey = keys.find((k: any) => (k.key || '').toUpperCase() === key);
+
+              if (foundKey) {
+                // STRICT CHECK: KEY HANYA BISA DIPAKAI DI 1 PRODUK YANG DIBELI!
+                if (productId) {
+                  const target = productId.toLowerCase();
+                  const keyProd = (foundKey.productId || '').toLowerCase();
+                  const keyRaw = (foundKey.productRawId || '').toLowerCase();
+                  if (keyProd !== target && keyRaw !== target) {
+                    res.setHeader('Content-Type', 'application/json');
+                    return res.end(JSON.stringify({
+                      success: false,
+                      valid: false,
+                      error: `Akses Ditolak: Key "${key}" HANYA BERLAKU untuk produk "${foundKey.productTitle}". Tidak dapat dipakai di script ini!`
+                    }));
+                  }
+                }
+
+                if (foundKey.frozenUntil) {
+                  res.setHeader('Content-Type', 'application/json');
+                  return res.end(JSON.stringify({
+                    success: false,
+                    valid: false,
+                    frozen: true,
+                    error: `Key sedang dibekukan sementara karena script sedang dalam perbaikan (maintenance). Sisa durasi aman.`
+                  }));
+                }
+
+                if (!foundKey.isLifetime && new Date(foundKey.expired) < new Date()) {
+                  res.setHeader('Content-Type', 'application/json');
+                  return res.end(JSON.stringify({
+                    success: false,
+                    valid: false,
+                    expired: true,
+                    error: `Key untuk "${foundKey.productTitle}" telah kadaluarsa (expired).`
+                  }));
+                }
+
+                const maxHwid = foundKey.maxHwid || 1;
+                const hwids = foundKey.hwids || [];
+                if (hwid && !hwids.includes(hwid)) {
+                  if (hwids.length >= maxHwid) {
+                    res.setHeader('Content-Type', 'application/json');
+                    return res.end(JSON.stringify({
+                      success: false,
+                      valid: false,
+                      hwid_limit_reached: true,
+                      error: `Batas perangkat tercapai (${hwids.length}/${maxHwid} HWID). Beli slot HWID tambahan di web.`
+                    }));
+                  }
+                  // Register HWID
+                  hwids.push(hwid);
+                  foundKey.hwids = hwids;
+                  foundKey.robloxUsers = foundKey.robloxUsers || [];
+                  foundKey.robloxUsers.push({ hwid, username: robloxUsername, registeredAt: new Date().toISOString() });
+                  
+                  await fetch(`${supabaseUrl}/rest/v1/app_settings?key=eq.toko_scripts_keys_data`, {
+                    method: 'PATCH',
+                    headers: { 'apikey': supabaseKey, 'Authorization': `Bearer ${supabaseKey}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ value: JSON.stringify(keys), updated_at: new Date().toISOString() })
+                  });
+                }
+
+                res.setHeader('Content-Type', 'application/json');
+                return res.end(JSON.stringify({
+                  success: true,
+                  valid: true,
+                  role: foundKey.role || 'Member',
+                  productTitle: foundKey.productTitle
+                }));
+              }
+
+              // Check if this is an ArexansTools key
+              const axsResp = await fetch(`${supabaseUrl}/rest/v1/app_settings?select=value&key=eq.license_keys`, {
+                headers: { 'apikey': supabaseKey, 'Authorization': `Bearer ${supabaseKey}` }
+              });
+              const axsData = await axsResp.json();
+              let axsKeys: any[] = [];
+              if (axsData && axsData[0]?.value) {
+                try { axsKeys = JSON.parse(axsData[0].value); } catch {}
+              }
+              const isAxsKey = axsKeys.some((k: any) => (k.key || '').toUpperCase() === key);
+
+              if (productId && isAxsKey) {
+                res.setHeader('Content-Type', 'application/json');
+                return res.end(JSON.stringify({
+                  success: false,
+                  valid: false,
+                  error: 'Akses Ditolak: Key Arexans Tools TIDAK DAPAT digunakan pada Toko Script! Setiap produk script memerlukan key tersendiri.'
+                }));
+              }
+
+              // Fallback to proxying to supabase validate-key function
+              const fwd = await fetch(`${supabaseUrl}/functions/v1/validate-key`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'apikey': supabaseKey },
+                body: bodyStr
+              });
+              const fwdText = await fwd.text();
+              res.setHeader('Content-Type', 'application/json');
+              return res.end(fwdText);
+            } catch (e: any) {
+              res.setHeader('Content-Type', 'application/json');
+              return res.end(JSON.stringify({ success: false, valid: false, error: e.message }));
+            }
+          });
+          return;
+        }
+
         const match = pathname.match(/^\/api\/public\/raw\/([a-zA-Z0-9_\-\.]+)/);
         if (!match) return next();
 
@@ -97,9 +240,11 @@ local function httpRequest(opts)
     return nil
 end
 
-local VALIDATE_URL = "${apiBase}/validate-key"
+local VALIDATE_URL = "${apiOrigin}/api/validate-key"
 local payload = HttpService:JSONEncode({
     key = KEY,
+    productId = "${scriptId}",
+    productTitle = "${title.replace(/"/g, '\\"')}",
     hwid = HWID,
     robloxUsername = USERNAME
 })

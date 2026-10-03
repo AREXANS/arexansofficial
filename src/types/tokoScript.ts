@@ -99,3 +99,30 @@ export interface ResellerGlobalSettings {
   isAutoRegistrationActive: boolean;
 }
 
+export interface TokoScriptRobloxUser {
+  hwid: string;
+  username: string;
+  registeredAt: string;
+}
+
+export interface TokoScriptKey {
+  id: string;
+  key: string;
+  productId: string;           // ID produk katalog spesifik yang dibeli
+  productTitle: string;        // Nama produk katalog
+  productRawId?: string;       // Slug/rawId jika ada
+  role?: string;               // Nama paket, e.g. "30 Hari", "Lifetime"
+  durationDays: number;        // Durasi hari (misal 30 atau 999999 untuk lifetime)
+  createdAt: string;           // ISO string
+  expired: string;             // Tanggal expired ISO string
+  isLifetime?: boolean;        // Akses permanen
+  maxHwid: number;             // Default 1 HWID slot
+  hwids: string[];             // HWID perangkat yang terdaftar
+  robloxUsers: TokoScriptRobloxUser[]; // Log user Roblox
+  frozenUntil: string | null;  // Waktu dibekukan saat maintenance
+  frozenRemainingMs: number | null; // Sisa durasi saat di-freeze
+  customerName?: string;       // Nama atau nomor pembeli / catatan
+  transactionId?: string;      // ID transaksi pembayaran
+}
+
+
