@@ -1,0 +1,1 @@
+UPDATE public.lua_scripts SET is_active = true WHERE script_type = 'whitelist_upload' AND is_active = false;

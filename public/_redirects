@@ -1,0 +1,3 @@
+/loader  https://caecqqzbikmwroevvyrd.supabase.co/functions/v1/get-loader?name=keysystem  200
+/api/*  https://caecqqzbikmwroevvyrd.supabase.co/functions/v1/:splat  200
+/*  /index.html  200

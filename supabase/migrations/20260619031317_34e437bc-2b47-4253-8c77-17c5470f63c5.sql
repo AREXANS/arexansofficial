@@ -1,0 +1,1 @@
+ALTER TABLE public.lua_scripts ADD COLUMN IF NOT EXISTS raw_content TEXT;

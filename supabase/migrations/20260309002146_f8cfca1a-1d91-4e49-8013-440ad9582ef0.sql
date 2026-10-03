@@ -1,0 +1,1 @@
+INSERT INTO app_settings (key, value, description) VALUES ('admin_key', 'arexanstools2025@', 'Admin panel password') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;

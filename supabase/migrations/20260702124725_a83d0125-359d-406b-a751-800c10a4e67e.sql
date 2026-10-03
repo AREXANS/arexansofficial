@@ -1,0 +1,1 @@
+ALTER TABLE public.lua_scripts ADD COLUMN IF NOT EXISTS backup_content text;

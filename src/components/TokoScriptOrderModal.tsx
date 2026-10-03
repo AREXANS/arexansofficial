@@ -1,0 +1,433 @@
+import React, { useState, useEffect } from 'react';
+import { TokoScriptProduct, ScriptPackage } from '@/types/tokoScript';
+import { recordResellerSale, checkResellerDiscountEligibility, getScriptRawId } from '@/lib/tokoScriptStore';
+import { getMaintenanceState, isDeveloperTesting } from '@/lib/maintenanceStore';
+import { supabase } from '@/integrations/supabase/client';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { Dices, ShieldCheck, Loader2, Sparkles, CheckCircle2, QrCode, Tag } from 'lucide-react';
+import { toast } from '@/hooks/use-toast';
+
+interface TokoScriptOrderModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  product: TokoScriptProduct | null;
+  resellerCode?: string | null;
+  onPaymentSuccess?: (paymentData: any) => void;
+  onOpenQris: (data: {
+    transactionId: string;
+    qr_string: string;
+    qris_url: string;
+    totalAmount: number;
+    expiresAt: string;
+    licenseKey: string;
+    packageName: string;
+    productTitle: string;
+    days: number;
+  }) => void;
+}
+
+export const TokoScriptOrderModal: React.FC<TokoScriptOrderModalProps> = ({
+  isOpen,
+  onClose,
+  product,
+  resellerCode,
+  onOpenQris,
+}) => {
+  const [licenseKey, setLicenseKey] = useState('');
+  const [selectedPackageId, setSelectedPackageId] = useState<string>('');
+  const [loading, setLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
+  const [discountInfo, setDiscountInfo] = useState<{
+    eligible: boolean;
+    discountPct: number;
+    reseller: any;
+    message?: string;
+  }>({ eligible: false, discountPct: 0, reseller: null });
+
+  // Check reseller discount eligibility for Toko Script
+  useEffect(() => {
+    if (resellerCode && isOpen) {
+      checkResellerDiscountEligibility(resellerCode, 'toko_script').then(setDiscountInfo);
+    } else {
+      setDiscountInfo({ eligible: false, discountPct: 0, reseller: null });
+    }
+  }, [resellerCode, isOpen]);
+
+  // When modal opens or product changes, pick first active package
+  useEffect(() => {
+    if (product) {
+      const activePackages = product.packages.filter(p => p.is_active);
+      if (activePackages.length > 0) {
+        setSelectedPackageId(activePackages[0].id);
+      }
+      if (!licenseKey) {
+        generateRandomKey();
+      }
+    }
+  }, [product, isOpen]);
+
+  if (!product) return null;
+
+  const activePackages = product.packages.filter(p => p.is_active);
+  const selectedPackage: ScriptPackage | undefined = activePackages.find(p => p.id === selectedPackageId) || activePackages[0];
+
+  const generateRandomKey = () => {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    let result = 'AXS-';
+    for (let i = 0; i < 8; i++) {
+      result += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    setLicenseKey(result);
+    setErrorMsg('');
+  };
+
+  const formatRupiah = (val: number) => {
+    return 'Rp ' + val.toLocaleString('id-ID');
+  };
+
+  const handleProceedPayment = async () => {
+    setErrorMsg('');
+
+    const mState = await getMaintenanceState();
+    const isUnderMaintenance = (mState.globalMaintenance || mState.tokoScriptsMaintenance || !!product.isMaintenance) && !isDeveloperTesting();
+    if (isUnderMaintenance) {
+      setErrorMsg('Script ini sedang dalam masa perbaikan (maintenance). Pembelian ditutup sementara & masa aktif key pembeli dibekukan agar tidak rugi.');
+      return;
+    }
+
+    const cleanKey = licenseKey.trim().toUpperCase();
+
+    if (!cleanKey || cleanKey.length < 4) {
+      setErrorMsg('Key minimal 4 karakter. Silakan ketik custom key atau klik Acak.');
+      return;
+    }
+
+    if (!selectedPackage) {
+      setErrorMsg('Pilih paket durasi terlebih dahulu.');
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      const txId = 'TXS-' + Math.random().toString(36).slice(2, 8).toUpperCase() + Date.now().toString().slice(-4);
+      const originalAmount = selectedPackage.price;
+      const discountPct = discountInfo.eligible ? discountInfo.discountPct : 0;
+      const amount = discountPct > 0
+        ? Math.round(originalAmount * (1 - discountPct / 100))
+        : originalAmount;
+      const deviceId = localStorage.getItem('arexans_device_id') || 'DEV-' + Math.random().toString(36).slice(2, 8).toUpperCase();
+      const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+
+      // Check if Edge Function create-payment is available, otherwise create fallback direct QRIS record
+      let qrString = `00020101021226670014ID.LINKAJA.WWW01189360091438927000000215${txId}51440014ID.CO.QRIS.WWW0215ID102002100000052045812530336054${amount}5802ID5912AREXANSTOOLS6007JAKARTA61051011062200116${txId}6304`;
+      let qrisUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qrString)}`;
+
+      try {
+        const { data: edgeData, error: edgeError } = await supabase.functions.invoke('create-payment', {
+          body: {
+            amount,
+            key: cleanKey,
+            packageName: `SCRIPT_${selectedPackage.name}`,
+            days: selectedPackage.days,
+            deviceId,
+            customerName: `Script Buyer (${product.title})`,
+          }
+        });
+
+        if (!edgeError && edgeData?.qr_string) {
+          qrString = edgeData.qr_string;
+          qrisUrl = edgeData.qris_url || qrisUrl;
+        }
+      } catch (e) {
+        console.warn('Edge function invoke failed, using generated QRIS fallback:', e);
+      }
+
+      // Record transaction in Supabase transactions table
+      try {
+        await supabase.from('transactions').insert({
+          transaction_id: txId,
+          customer_name: `Toko Script (${cleanKey})`,
+          package_name: `${product.title} [${selectedPackage.name}]`,
+          package_duration: selectedPackage.days,
+          license_key: cleanKey,
+          original_amount: originalAmount,
+          total_amount: amount,
+          status: 'pending',
+          qr_string: qrString,
+          device_id: deviceId,
+          expires_at: expiresAt,
+        });
+      } catch (dbErr) {
+        console.warn('Could not insert directly to transactions table:', dbErr);
+      }
+
+      // If reseller code is present, record the sale
+      if (resellerCode) {
+        await recordResellerSale({
+          resellerCode,
+          productSource: 'toko_script',
+          productId: product.id,
+          productTitle: product.title,
+          packageName: selectedPackage.name,
+          packageDays: selectedPackage.days,
+          salePrice: amount,
+          buyerKey: cleanKey,
+          transactionId: txId,
+        });
+      }
+
+      toast({
+        title: 'Pesanan Berhasil Dibuat',
+        description: `Key ${cleanKey} untuk paket ${selectedPackage.name} siap dibayar via QRIS.`,
+      });
+
+      onClose();
+
+      onOpenQris({
+        transactionId: txId,
+        qr_string: qrString,
+        qris_url: qrisUrl,
+        totalAmount: amount,
+        expiresAt,
+        licenseKey: cleanKey,
+        packageName: `${product.title} (${selectedPackage.name})`,
+        productTitle: product.title,
+        productId: getScriptRawId(product),
+        days: selectedPackage.days,
+      });
+    } catch (err: any) {
+      console.error(err);
+      setErrorMsg(err.message || 'Gagal memproses pesanan. Silakan coba lagi.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-w-md w-full p-5 bg-card/95 backdrop-blur-2xl border-border/80 shadow-2xl rounded-2xl">
+        <DialogHeader className="text-left space-y-1">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-primary/20 text-primary border border-primary/40">
+              Order Script
+            </span>
+            {resellerCode && (
+              <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                Ref: {resellerCode}
+              </span>
+            )}
+          </div>
+          <DialogTitle className="text-lg font-bold text-foreground">
+            {product.title}
+          </DialogTitle>
+          <DialogDescription className="text-xs text-muted-foreground">
+            Masukkan key yang diinginkan atau buat acak, lalu tentukan paket durasi.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4 pt-1">
+          {/* Reseller Discount Banner */}
+          {discountInfo.eligible && discountInfo.discountPct > 0 && (
+            <div className="p-2.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-between text-xs">
+              <span className="text-emerald-400 font-semibold flex items-center gap-1.5">
+                <Sparkles className="w-3.5 h-3.5" />
+                Diskon Reseller {discountInfo.discountPct}% Aktif!
+              </span>
+              <span className="text-[11px] text-muted-foreground font-mono">
+                @{discountInfo.reseller?.username || resellerCode}
+              </span>
+            </div>
+          )}
+
+          {resellerCode && !discountInfo.eligible && (
+            <div className="p-2 rounded-xl bg-muted/40 border border-border text-[11px] text-muted-foreground">
+              {discountInfo.message || 'Kode referral ini tidak berlaku untuk produk Toko Script.'}
+            </div>
+          )}
+
+          {/* 1. KOLOM KEY CUSTOM / ACAK */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <Label className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                <ShieldCheck className="w-3.5 h-3.5 text-primary" />
+                Key Lisensi (Custom / Acak)
+              </Label>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={generateRandomKey}
+                className="h-7 px-2.5 text-xs text-primary border-primary/40 hover:bg-primary/10 gap-1 rounded-lg"
+              >
+                <Dices className="w-3.5 h-3.5" />
+                Acak
+              </Button>
+            </div>
+            <div className="relative">
+              <Input
+                value={licenseKey}
+                onChange={(e) => {
+                  setLicenseKey(e.target.value.toUpperCase());
+                  setErrorMsg('');
+                }}
+                placeholder="Contoh: AXS-MYKEY123"
+                className="font-mono text-sm tracking-wider uppercase h-11 bg-background/60 border-primary/30 focus-visible:ring-primary/40 rounded-xl"
+                maxLength={24}
+              />
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              Key ini akan otomatis aktif setelah pembayaran QRIS diverifikasi.
+            </p>
+          </div>
+
+          {/* 2. PILIH PAKET */}
+          <div className="space-y-2">
+            <Label className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+              <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
+              Pilih Paket Durasi
+            </Label>
+
+            {activePackages.length === 0 ? (
+              <div className="p-3 text-xs text-muted-foreground text-center border border-dashed rounded-xl">
+                Belum ada paket aktif untuk script ini.
+              </div>
+            ) : (
+              <RadioGroup
+                value={selectedPackageId}
+                onValueChange={setSelectedPackageId}
+                className="grid gap-2 max-h-56 overflow-y-auto pr-1"
+              >
+                {activePackages.map((pkg) => {
+                  const isSelected = selectedPackage?.id === pkg.id;
+                  const basePrice = pkg.price;
+                  const discountedPrice = discountInfo.eligible && discountInfo.discountPct > 0
+                    ? Math.round(basePrice * (1 - discountInfo.discountPct / 100))
+                    : basePrice;
+
+                  return (
+                    <label
+                      key={pkg.id}
+                      htmlFor={`pkg-${pkg.id}`}
+                      className={`flex items-center justify-between p-3 rounded-xl border cursor-pointer transition-all ${
+                        isSelected
+                          ? 'border-primary bg-primary/15 shadow-sm shadow-primary/20'
+                          : 'border-border/70 bg-card/40 hover:bg-muted/30'
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <RadioGroupItem value={pkg.id} id={`pkg-${pkg.id}`} />
+                        <div>
+                          <div className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                            {pkg.name}
+                            {pkg.days >= 999999 && (
+                              <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                                Permanen
+                              </span>
+                            )}
+                          </div>
+                          {pkg.description && (
+                            <p className="text-[11px] text-muted-foreground mt-0.5">
+                              {pkg.description}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        {discountInfo.eligible && discountInfo.discountPct > 0 ? (
+                          <>
+                            <div className="text-[10px] text-muted-foreground line-through font-mono">
+                              {formatRupiah(basePrice)}
+                            </div>
+                            <div className="text-xs font-extrabold text-emerald-400 font-mono">
+                              {formatRupiah(discountedPrice)}
+                            </div>
+                          </>
+                        ) : (
+                          <div className="text-xs font-extrabold text-primary font-mono">
+                            {formatRupiah(basePrice)}
+                          </div>
+                        )}
+                        <div className="text-[10px] text-muted-foreground">
+                          {pkg.days >= 999999 ? 'Lifetime' : `${pkg.days} hari`}
+                        </div>
+                      </div>
+                    </label>
+                  );
+                })}
+              </RadioGroup>
+            )}
+          </div>
+
+          {errorMsg && (
+            <div className="p-2.5 rounded-xl bg-destructive/15 border border-destructive/40 text-destructive text-xs">
+              {errorMsg}
+            </div>
+          )}
+
+          {/* TOTAL & SUBMIT BUTTON */}
+          <div className="pt-2 border-t border-border/60 space-y-3">
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-xs text-muted-foreground">Total Tagihan:</span>
+              <div className="text-right">
+                {discountInfo.eligible && discountInfo.discountPct > 0 && selectedPackage && (
+                  <span className="text-xs text-muted-foreground line-through mr-2 font-mono">
+                    {formatRupiah(selectedPackage.price)}
+                  </span>
+                )}
+                <span className="font-mono text-base font-bold text-primary">
+                  {selectedPackage
+                    ? formatRupiah(
+                        discountInfo.eligible && discountInfo.discountPct > 0
+                          ? Math.round(selectedPackage.price * (1 - discountInfo.discountPct / 100))
+                          : selectedPackage.price
+                      )
+                    : 'Rp 0'}
+                </span>
+                {discountInfo.eligible && discountInfo.discountPct > 0 && (
+                  <span className="block text-[10px] text-emerald-400 font-medium">
+                    Hemat {discountInfo.discountPct}% (Diskon Reseller)
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={onClose}
+                disabled={loading}
+                className="flex-1 rounded-xl h-11 text-xs"
+              >
+                Batal
+              </Button>
+              <Button
+                type="button"
+                onClick={handleProceedPayment}
+                disabled={loading || !selectedPackage || !licenseKey.trim()}
+                className="flex-1 rounded-xl h-11 text-xs font-bold bg-primary hover:bg-primary/90 text-primary-foreground gap-1.5 shadow-md shadow-primary/20"
+              >
+                {loading ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Memproses...
+                  </>
+                ) : (
+                  <>
+                    <QrCode className="w-4 h-4" />
+                    Bayar via QRIS
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+};

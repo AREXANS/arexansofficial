@@ -1,0 +1,64 @@
+{
+  "headers": [
+    {
+      "source": "/api/(.*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "private, no-store, no-cache, max-age=0, must-revalidate"
+        },
+        {
+          "key": "CDN-Cache-Control",
+          "value": "no-store"
+        },
+        {
+          "key": "Vercel-CDN-Cache-Control",
+          "value": "no-store"
+        },
+        {
+          "key": "Vary",
+          "value": "Accept, User-Agent, Sec-Fetch-Mode, Sec-Fetch-Dest, Sec-CH-UA, Upgrade-Insecure-Requests, X-Requested-With"
+        }
+      ]
+    },
+    {
+      "source": "/loader",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "private, no-store, no-cache, max-age=0, must-revalidate"
+        },
+        {
+          "key": "CDN-Cache-Control",
+          "value": "no-store"
+        },
+        {
+          "key": "Vercel-CDN-Cache-Control",
+          "value": "no-store"
+        },
+        {
+          "key": "Vary",
+          "value": "Accept, User-Agent, Sec-Fetch-Mode, Sec-Fetch-Dest, Sec-CH-UA, Upgrade-Insecure-Requests, X-Requested-With"
+        }
+      ]
+    }
+  ],
+  "rewrites": [
+    {
+      "source": "/loader",
+      "destination": "https://caecqqzbikmwroevvyrd.supabase.co/functions/v1/get-loader?name=keysystem"
+    },
+    {
+      "source": "/api/public/raw/:id",
+      "destination": "https://caecqqzbikmwroevvyrd.supabase.co/functions/v1/get-script?name=:id&raw=1&public=1"
+    },
+    {
+      "source": "/api/:fn",
+      "destination": "https://caecqqzbikmwroevvyrd.supabase.co/functions/v1/:fn"
+    },
+    {
+      "source": "/((?!assets|images|favicon|robots|api).*)",
+      "destination": "/index.html"
+    }
+  ]
+}

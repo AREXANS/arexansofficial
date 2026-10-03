@@ -1,0 +1,1 @@
+DELETE FROM public.app_settings WHERE key LIKE 'cashify_tx_%' OR key LIKE 'cashify_topup_tx_%';
