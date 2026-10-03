@@ -7,7 +7,6 @@ import PaymentSuccess from '@/components/PaymentSuccess';
 import MaintenancePage from '@/components/MaintenancePage';
 import { toast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
-import { recordResellerSale } from '@/lib/tokoScriptStore';
 import { isDeveloperTesting, getMaintenanceState } from '@/lib/maintenanceStore';
 
 interface Ad {
@@ -103,7 +102,6 @@ const Index = () => {
   // Auto-fill key from URL params (from KeySystem perpanjang button)
   const prefilledKey = searchParams.get('key');
   const prefilledRole = searchParams.get('role');
-  const resellerRef = searchParams.get('ref');
   const tabParam = searchParams.get('tab') as 'tools' | 'toko' | null;
 
   useEffect(() => {
@@ -113,12 +111,9 @@ const Index = () => {
       const pkg = prefilledRole?.toUpperCase() === 'VIP' || prefilledRole?.toUpperCase() === 'DEVELOPER' ? 'VIP' : 'NORMAL';
       setSelectedPkg(pkg);
       setStep(2);
-      // Clear URL params while preserving ref if any
-      const newParams: Record<string, string> = {};
-      if (resellerRef) newParams.ref = resellerRef;
-      setSearchParams(newParams, { replace: true });
+      setSearchParams({}, { replace: true });
     }
-  }, [prefilledKey]);
+  }, [prefilledKey, prefilledRole, setSearchParams]);
 
   const handleTokoScriptQris = (order: {
     transactionId: string;
@@ -221,8 +216,13 @@ const Index = () => {
     };
 
     const checkMaintenance = async () => {
-      const { data } = await supabase.from('app_settings').select('value').eq('key', 'maintenance_mode').single();
-      if (data) setIsMaintenance(data.value === 'true');
+      try {
+        const mState = await getMaintenanceState();
+        setIsMaintenance(Boolean(mState.globalMaintenance || mState.arexansToolsMaintenance));
+      } catch {
+        const { data } = await supabase.from('app_settings').select('value').eq('key', 'maintenance_mode').single();
+        if (data) setIsMaintenance(data.value === 'true');
+      }
     };
 
     const loadGateway = async () => {
@@ -304,21 +304,6 @@ const Index = () => {
         setStep(4);
         saveState(4, null, newFinalData, days);
         setStatusMsg('');
-
-        // If resellerRef is present, record sale for Arexans Tools
-        if (resellerRef) {
-          recordResellerSale({
-            resellerCode: resellerRef,
-            productSource: 'arexans_tools',
-            productId: 'arexans-' + (selectedPkg || 'NORMAL').toLowerCase(),
-            productTitle: `Arexans Tools (${selectedPkg || 'NORMAL'})`,
-            packageName: `${selectedPkg || 'NORMAL'} (${days >= 999999 ? 'LIFETIME' : days + ' Hari'})`,
-            packageDays: days,
-            salePrice: paymentData?.totalAmount || 0,
-            buyerKey: formData.key,
-            transactionId,
-          }).catch(console.warn);
-        }
         
         toast({ 
           title: "Pembayaran Berhasil!", 
@@ -537,7 +522,6 @@ const Index = () => {
       prices={PRICES}
       ads={ads}
       packages={packages}
-      resellerCode={resellerRef}
       defaultTab={tabParam === 'toko' ? 'toko' : 'tools'}
       onTokoScriptOrderQris={handleTokoScriptQris}
     />
@@ -556,7 +540,6 @@ const Index = () => {
         formatRupiah={formatRupiah}
         parseDuration={parseDuration}
         prices={PRICES}
-        resellerCode={resellerRef}
       />
       {pendingPayment && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">

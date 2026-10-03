@@ -19,7 +19,6 @@ const CURRENT_RESELLER_KEY = 'arexans_current_reseller_session_v2';
 export const DEFAULT_RESELLER_GLOBAL_SETTINGS: ResellerGlobalSettings = {
   autoRegistrationPrice: 80000,
   defaultCommissionPct: 20,
-  defaultDiscountPct: 10,
   defaultScope: 'both',
   isAutoRegistrationActive: true,
 };
@@ -377,42 +376,42 @@ export const saveResellerAccounts = async (accounts: ResellerAccount[]): Promise
  */
 export const developerCreateReseller = async (data: {
   username: string;
-  email: string;
   password: string;
-  name: string;
   phone: string;
-  referralCode: string;
-  payoutMethod: string;
+  payoutMethod: ResellerPayoutMethod | string;
   payoutAccountNumber: string;
   payoutAccountName: string;
+  payoutQrisUrl?: string;
   commissionPct: number;
   commissionScope: 'toko_script' | 'arexans_tools' | 'both';
-  buyerDiscountPct?: number;
+  name?: string;
+  email?: string;
 }): Promise<{ success: boolean; message?: string; account?: ResellerAccount }> => {
   const accounts = await getResellerAccounts();
 
   const usernameClean = data.username.trim().toLowerCase();
-  const codeClean = data.referralCode.trim().toUpperCase();
 
   if (accounts.some(a => a.username.toLowerCase() === usernameClean)) {
     return { success: false, message: 'Username sudah digunakan oleh reseller lain.' };
   }
-  if (accounts.some(a => a.email.toLowerCase() === data.email.trim().toLowerCase())) {
-    return { success: false, message: 'Email sudah terdaftar.' };
-  }
-  if (accounts.some(a => a.referralCode.toUpperCase() === codeClean)) {
-    return { success: false, message: 'Kode referral sudah digunakan. Pilih kode lain.' };
-  }
+
+  // Ensure payout method is one of QRIS, DANA, or SEABANK
+  const validMethods = ['QRIS', 'DANA', 'SEABANK'];
+  const methodClean = validMethods.includes(data.payoutMethod?.toUpperCase())
+    ? (data.payoutMethod.toUpperCase() as ResellerPayoutMethod)
+    : 'QRIS';
 
   const newAccount: ResellerAccount = {
-    ...data,
     id: 'reseller-' + Math.random().toString(36).slice(2, 9),
     username: usernameClean,
-    referralCode: codeClean,
-    // Komisi diatur saat pembuatan akun saja
+    password: data.password,
+    phone: data.phone.trim(),
+    payoutMethod: methodClean,
+    payoutAccountNumber: data.payoutAccountNumber.trim(),
+    payoutAccountName: data.payoutAccountName.trim() || usernameClean,
+    payoutQrisUrl: data.payoutQrisUrl?.trim(),
     commissionPct: Math.max(1, Math.min(100, Number(data.commissionPct) || 20)),
     commissionScope: data.commissionScope || 'both',
-    buyerDiscountPct: Math.max(0, Math.min(90, Number(data.buyerDiscountPct ?? 10))),
     registeredVia: 'manual_developer',
     totalSalesCount: 0,
     totalSalesAmount: 0,
@@ -471,17 +470,20 @@ export const developerDeleteReseller = async (id: string): Promise<boolean> => {
 
 /**
  * Pembuatan Akun Otomatis Seharga Rp 80.000 dengan Pembayaran Pakasir
+ * Wajib payment reseller hanya QRIS / DANA / SEABANK (QRIS diutamakan)
+ * Tanpa email, nama lengkap, atau referral
  */
 export const createPakasirResellerOrder = async (accountData: {
-  name: string;
   username: string;
-  email: string;
   phone: string;
   password: string;
-  payoutMethod: string;
+  payoutMethod: ResellerPayoutMethod | string;
   payoutAccountNumber: string;
   payoutAccountName: string;
-  referralCode: string;
+  payoutQrisUrl?: string;
+  name?: string;
+  email?: string;
+  referralCode?: string;
   commissionPct?: number;
   commissionScope?: 'toko_script' | 'arexans_tools' | 'both';
 }): Promise<{
@@ -495,13 +497,9 @@ export const createPakasirResellerOrder = async (accountData: {
 }> => {
   const accounts = await getResellerAccounts();
   const usernameClean = accountData.username.trim().toLowerCase();
-  const codeClean = accountData.referralCode.trim().toUpperCase();
 
   if (accounts.some(a => a.username.toLowerCase() === usernameClean)) {
     return { success: false, message: 'Username sudah digunakan. Silakan gunakan username lain.' };
-  }
-  if (accounts.some(a => a.referralCode.toUpperCase() === codeClean)) {
-    return { success: false, message: 'Kode referral sudah digunakan oleh reseller lain.' };
   }
 
   const orderId = `RSL-${Date.now()}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
@@ -517,7 +515,7 @@ export const createPakasirResellerOrder = async (accountData: {
     const { data: edgeData, error: edgeError } = await supabase.functions.invoke('create-payment', {
       body: {
         amount,
-        customerName: `Pendaftaran Reseller (${accountData.name})`,
+        customerName: `Pendaftaran Reseller (@${usernameClean})`,
         customerWhatsapp: accountData.phone,
         packageName: 'RESELLER_ACTIVATION',
         packageDuration: 999999,
@@ -538,7 +536,7 @@ export const createPakasirResellerOrder = async (accountData: {
   try {
     await supabase.from('transactions').insert({
       transaction_id: orderId,
-      customer_name: `Beli Akun Reseller: ${accountData.name} (@${usernameClean})`,
+      customer_name: `Beli Akun Reseller: @${usernameClean}`,
       customer_whatsapp: accountData.phone,
       package_name: 'RESELLER_PRO_80K',
       package_duration: 999999,
@@ -595,21 +593,24 @@ export const activatePaidResellerAccount = async (
     return { success: true, message: 'Akun reseller sudah aktif!', account: existing };
   }
 
+  // Clean payout method
+  const validMethods = ['QRIS', 'DANA', 'SEABANK'];
+  const payoutMethodClean = validMethods.includes(pendingData.payoutMethod?.toUpperCase())
+    ? (pendingData.payoutMethod.toUpperCase() as ResellerPayoutMethod)
+    : 'QRIS';
+
   const newAccount: ResellerAccount = {
     id: 'reseller-' + Math.random().toString(36).slice(2, 9),
     username: pendingData.username.toLowerCase().trim(),
-    email: pendingData.email.trim(),
     password: pendingData.password,
-    name: pendingData.name.trim(),
     phone: pendingData.phone.trim(),
-    referralCode: pendingData.referralCode.trim().toUpperCase(),
-    payoutMethod: pendingData.payoutMethod || 'DANA',
+    payoutMethod: payoutMethodClean,
     payoutAccountNumber: pendingData.payoutAccountNumber.trim(),
-    payoutAccountName: pendingData.payoutAccountName.trim() || pendingData.name.trim(),
+    payoutAccountName: pendingData.payoutAccountName.trim() || pendingData.username.trim(),
+    payoutQrisUrl: pendingData.payoutQrisUrl?.trim(),
     // Komisi diatur saat pembuatan akun saja (dari setting developer pendaftaran otomatis)
     commissionPct: globalSettings.defaultCommissionPct || 20,
     commissionScope: globalSettings.defaultScope || 'both',
-    buyerDiscountPct: globalSettings.defaultDiscountPct || 10,
     registeredVia: 'pakasir_purchase',
     activationPaymentTxId: transactionId,
     totalSalesCount: 0,
@@ -1022,38 +1023,20 @@ export const clearAllResellerLogs = async (
  * Sesuai instruksi: "bisa settings produk yang diskon reseler toko script atau arexanstools atau keduanya"
  */
 export const checkResellerDiscountEligibility = async (
-  code: string,
-  productType: 'toko_script' | 'arexans_tools'
+  _code: string,
+  _productType: 'toko_script' | 'arexans_tools'
 ): Promise<{
   eligible: boolean;
   discountPct: number;
   reseller: ResellerAccount | null;
   message?: string;
 }> => {
-  if (!code) return { eligible: false, discountPct: 0, reseller: null };
-
-  const reseller = await findResellerByCode(code);
-  if (!reseller) {
-    return { eligible: false, discountPct: 0, reseller: null, message: 'Kode reseller tidak terdaftar' };
-  }
-
-  const scope = reseller.commissionScope || 'both';
-  if (scope !== 'both' && scope !== productType) {
-    const scopeLabel = scope === 'toko_script' ? 'Toko Script' : 'Arexans Tools';
-    return {
-      eligible: false,
-      discountPct: 0,
-      reseller,
-      message: `Kode promo @${reseller.username} hanya berlaku untuk produk ${scopeLabel}`,
-    };
-  }
-
-  const discountPct = reseller.buyerDiscountPct || 10;
+  // Sesuai brief: Reseller tidak ada referral ataupun potongan pembeli
   return {
-    eligible: true,
-    discountPct,
-    reseller,
-    message: `Diskon Reseller ${discountPct}% dari mitra @${reseller.username} berhasil diterapkan!`,
+    eligible: false,
+    discountPct: 0,
+    reseller: null,
+    message: 'Tidak ada potongan diskon pembeli untuk reseller',
   };
 };
 

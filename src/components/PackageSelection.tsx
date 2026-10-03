@@ -6,7 +6,6 @@ import { supabase } from '@/integrations/supabase/client';
 import { Link as LinkIcon, Key, Coins, History, Search, Bell, Shield, ShoppingBag, Sparkles, Wrench, Lock, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { TokoScriptCatalog } from './TokoScriptCatalog';
-import { checkResellerDiscountEligibility } from '@/lib/tokoScriptStore';
 import { getMaintenanceState, isDeveloperTesting, MaintenanceState, DEFAULT_MAINTENANCE_STATE } from '@/lib/maintenanceStore';
 import { toast } from '@/hooks/use-toast';
 
@@ -46,7 +45,6 @@ interface PackageSelectionProps {
   prices: { NORMAL: number; VIP: number };
   ads: Ad[];
   packages?: Package[];
-  resellerCode?: string | null;
   defaultTab?: 'tools' | 'toko';
   onTokoScriptOrderQris?: (data: {
     transactionId: string;
@@ -58,6 +56,7 @@ interface PackageSelectionProps {
     packageName: string;
     productTitle: string;
     days: number;
+    productId?: string;
   }) => void;
 }
 
@@ -107,7 +106,6 @@ const PackageSelection: FC<PackageSelectionProps> = ({
   prices,
   ads,
   packages,
-  resellerCode,
   defaultTab,
   onTokoScriptOrderQris,
 }) => {
@@ -119,26 +117,11 @@ const PackageSelection: FC<PackageSelectionProps> = ({
   const [unclaimedCount, setUnclaimedCount] = useState(0);
   const [maintenanceState, setMaintenanceState] = useState<MaintenanceState>(DEFAULT_MAINTENANCE_STATE);
   const [isDevMode, setIsDevMode] = useState(false);
-  const [toolsResellerDiscount, setToolsResellerDiscount] = useState<{
-    eligible: boolean;
-    discountPct: number;
-    reseller: any;
-  } | null>(null);
 
   useEffect(() => {
     setIsDevMode(isDeveloperTesting());
     getMaintenanceState().then(setMaintenanceState);
   }, []);
-
-  useEffect(() => {
-    if (resellerCode) {
-      checkResellerDiscountEligibility(resellerCode, 'arexans_tools').then(res => {
-        if (res.eligible) {
-          setToolsResellerDiscount(res);
-        }
-      });
-    }
-  }, [resellerCode]);
 
   useEffect(() => {
     if (defaultTab) {
@@ -305,7 +288,6 @@ const PackageSelection: FC<PackageSelectionProps> = ({
         {activeMainTab === 'toko' ? (
           <div className="mb-8">
             <TokoScriptCatalog
-              resellerCode={resellerCode}
               onOpenQris={(data) => {
                 if (onTokoScriptOrderQris) {
                   onTokoScriptOrderQris(data);

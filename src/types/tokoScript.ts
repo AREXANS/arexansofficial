@@ -31,20 +31,22 @@ export interface TokoScriptProduct {
   updatedAt: string;
 }
 
+export type ResellerPayoutMethod = 'QRIS' | 'DANA' | 'SEABANK';
+
 export interface ResellerAccount {
   id: string;
   username: string;
-  email: string;
   password: string; // stored for reseller portal
-  name: string;
-  phone: string;
-  referralCode: string;
-  payoutMethod: string;    // e.g. 'DANA', 'GoPay', 'OVO', 'ShopeePay', 'BCA', 'BRI', 'Mandiri'
-  payoutAccountNumber: string;
-  payoutAccountName: string;
-  commissionPct: number;   // Persentase komisi bagi hasil diatur saat pembuatan akun (misal 20%)
-  commissionScope: 'toko_script' | 'arexans_tools' | 'both'; // Produk yang diskon/komisi reseller
-  buyerDiscountPct?: number; // Diskon persen untuk pembeli yang memakai link/kode referral (default 10%)
+  phone: string;    // WhatsApp/HP untuk koordinasi
+  email?: string;   // Deprecated / tidak digunakan
+  name?: string;    // Deprecated / tidak digunakan
+  referralCode?: string; // Deprecated / tidak ada referral
+  payoutMethod: ResellerPayoutMethod; // Wajib QRIS, DANA, atau SEABANK (QRIS diutamakan)
+  payoutAccountNumber: string; // Nomor DANA, No Rekening SeaBank, atau Link Gambar/String QRIS
+  payoutAccountName: string;   // Nama pemilik akun atau nama QRIS
+  payoutQrisUrl?: string;      // URL gambar QRIS jika ada
+  commissionPct: number;       // Persentase komisi bagi hasil diatur saat pembuatan akun (misal 20%)
+  commissionScope: 'toko_script' | 'arexans_tools' | 'both'; // Produk yang dapat komisi
   registeredVia: 'manual_developer' | 'pakasir_purchase';
   activationPaymentTxId?: string;
   totalSalesCount: number;
@@ -59,7 +61,8 @@ export interface ResellerAccount {
 export interface ResellerSale {
   id: string;
   resellerId: string;
-  resellerCode: string;
+  resellerCode?: string;
+  resellerUsername?: string;
   productId: string;
   productTitle: string;
   packageName: string;
@@ -76,10 +79,11 @@ export interface ResellerSale {
 export interface CommissionWithdrawal {
   id: string;
   resellerId: string;
-  resellerName: string;
-  resellerCode: string;
+  resellerName?: string;
+  resellerUsername?: string;
+  resellerCode?: string;
   amount: number;
-  payoutMethod: string;
+  payoutMethod: ResellerPayoutMethod | string;
   accountNumber: string;
   accountName: string;
   notes?: string;
@@ -91,7 +95,6 @@ export interface CommissionWithdrawal {
 export interface ResellerGlobalSettings {
   autoRegistrationPrice: number; // 80000
   defaultCommissionPct: number;  // Default persentase komisi bagi hasil akun baru
-  defaultDiscountPct: number;    // Default diskon untuk pembeli dengan kode referral (misal 10%)
   defaultScope: 'toko_script' | 'arexans_tools' | 'both';
   isAutoRegistrationActive: boolean;
 }

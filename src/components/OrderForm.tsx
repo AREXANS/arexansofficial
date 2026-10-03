@@ -6,7 +6,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Shuffle, Edit3, Tag, ChevronDown, Gift, Coins, CreditCard, Sparkles } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from '@/hooks/use-toast';
-import { checkResellerDiscountEligibility } from '@/lib/tokoScriptStore';
 import { getMaintenanceState, isDeveloperTesting } from '@/lib/maintenanceStore';
 import GlobalBackground from './GlobalBackground';
 
@@ -69,12 +68,6 @@ const OrderForm: FC<OrderFormProps> = ({
   const [appliedPromo, setAppliedPromo] = useState<Discount | null>(null);
   const [promoError, setPromoError] = useState('');
   const [showPromoInput, setShowPromoInput] = useState(false);
-  const [resellerDiscount, setResellerDiscount] = useState<{
-    eligible: boolean;
-    discountPct: number;
-    reseller: any;
-    message?: string;
-  } | null>(null);
   const [xcoinsEnabled, setXcoinsEnabled] = useState(false);
   const [xcoinsOnly, setXcoinsOnly] = useState(false);
   const [xcoinsUser, setXcoinsUser] = useState<{id: string; phone: string; balance: number; display_name: string} | null>(null);
@@ -184,17 +177,6 @@ const OrderForm: FC<OrderFormProps> = ({
       .sort((a, b) => (b.min_days || 0) - (a.min_days || 0))[0] || null;
   };
 
-  // Load reseller discount if referral code present
-  useEffect(() => {
-    if (resellerCode) {
-      checkResellerDiscountEligibility(resellerCode, 'arexans_tools').then(res => {
-        if (res.eligible) {
-          setResellerDiscount(res);
-        }
-      });
-    }
-  }, [resellerCode]);
-
   const applyPromoCode = () => {
     setPromoError('');
     const now = new Date();
@@ -208,20 +190,8 @@ const OrderForm: FC<OrderFormProps> = ({
     });
 
     if (!promo) {
-      // Check if it's a valid reseller referral code for arexans_tools!
-      checkResellerDiscountEligibility(promoCode, 'arexans_tools').then(res => {
-        if (res.eligible) {
-          setResellerDiscount(res);
-          setPromoError('');
-          toast({
-            title: 'Diskon Reseller Aktif!',
-            description: `Mendapatkan potongan harga ${res.discountPct}% dari mitra @${res.reseller?.username}`,
-          });
-        } else {
-          setPromoError(res.message || 'Kode promo atau reseller tidak valid atau kadaluarsa');
-          setAppliedPromo(null);
-        }
-      });
+      setPromoError('Kode promo tidak valid atau telah kadaluarsa');
+      setAppliedPromo(null);
       return;
     }
 
@@ -249,7 +219,6 @@ const OrderForm: FC<OrderFormProps> = ({
 
   const removePromo = () => {
     setAppliedPromo(null);
-    setResellerDiscount(null);
     setPromoCode('');
     setPromoError('');
     setShowPromoInput(false);
@@ -260,13 +229,9 @@ const OrderForm: FC<OrderFormProps> = ({
   const standardDiscountPercent = activeDiscount?.discount_percent || 0;
   const fixedAmount = activeDiscount?.discount_amount || 0;
 
-  // Integrate reseller discount percentage
-  const resellerDiscountPct = resellerDiscount?.eligible ? resellerDiscount.discountPct : 0;
-  const totalDiscountPercent = Math.max(standardDiscountPercent, resellerDiscountPct);
-
   const discountAmount = fixedAmount > 0
     ? Math.min(fixedAmount, estimatedTotal)
-    : Math.floor(estimatedTotal * (totalDiscountPercent / 100));
+    : Math.floor(estimatedTotal * (standardDiscountPercent / 100));
   const finalTotal = Math.max(0, estimatedTotal - discountAmount);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -285,7 +250,7 @@ const OrderForm: FC<OrderFormProps> = ({
     if (paymentMethod === 'xcoins') {
       handleXcoinsPay(e);
     } else {
-      const codeToPass = appliedPromo?.promo_code || (resellerDiscount?.eligible ? resellerDiscount.reseller?.referralCode : undefined);
+      const codeToPass = appliedPromo?.promo_code || undefined;
       onSubmit(e, codeToPass, finalTotal > 0 ? finalTotal : undefined);
     }
   };
@@ -464,12 +429,12 @@ const OrderForm: FC<OrderFormProps> = ({
           )}
 
           {/* Promo Code Input */}
-          {(showPromoInput || appliedPromo || resellerDiscount?.eligible) && (
+          {(showPromoInput || appliedPromo) && (
             <div className="animate-slide-in">
-              <label className="block text-sm font-medium mb-2 text-foreground flex items-center gap-2"><Tag className="w-4 h-4" />Kode Promo / Referral</label>
+              <label className="block text-sm font-medium mb-2 text-foreground flex items-center gap-2"><Tag className="w-4 h-4" />Kode Promo</label>
               <div className="flex gap-2">
-                <Input type="text" value={promoCode} onChange={(e) => setPromoCode(e.target.value.toUpperCase())} placeholder="Masukkan kode promo atau kode reseller" className="flex-1 bg-muted/50 border-border focus:border-primary font-mono" disabled={!!appliedPromo || !!resellerDiscount?.eligible} />
-                {(appliedPromo || resellerDiscount?.eligible) ? (
+                <Input type="text" value={promoCode} onChange={(e) => setPromoCode(e.target.value.toUpperCase())} placeholder="Masukkan kode promo" className="flex-1 bg-muted/50 border-border focus:border-primary font-mono" disabled={!!appliedPromo} />
+                {appliedPromo ? (
                   <Button type="button" variant="outline" onClick={removePromo} className="shrink-0 border-destructive text-destructive hover:bg-destructive/10">Hapus</Button>
                 ) : (
                   <Button type="button" variant="outline" onClick={applyPromoCode} disabled={!promoCode} className="shrink-0 border-border hover:bg-muted">Terapkan</Button>
@@ -480,12 +445,6 @@ const OrderForm: FC<OrderFormProps> = ({
                 <p className="text-xs text-green-500 mt-2 flex items-center gap-1">
                   <Gift className="w-3 h-3" />
                   Kode promo berhasil diterapkan: -{appliedPromo.discount_percent}%
-                </p>
-              )}
-              {resellerDiscount?.eligible && (
-                <p className="text-xs text-emerald-400 mt-2 flex items-center gap-1">
-                  <Sparkles className="w-3.5 h-3.5" />
-                  Diskon Reseller mitra @{resellerDiscount.reseller?.username} aktif: -{resellerDiscount.discountPct}%
                 </p>
               )}
             </div>

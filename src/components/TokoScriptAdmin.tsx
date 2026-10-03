@@ -438,69 +438,65 @@ export const TokoScriptAdmin: React.FC = () => {
     setResPassword('');
     setResEmail('');
     setResPhone('');
-    setResPayoutMethod('DANA');
+    setResPayoutMethod('QRIS');
     setResPayoutAccountNumber('');
     setResPayoutAccountName('');
-    setResReferralCode('AREX-' + Math.random().toString(36).slice(2, 6).toUpperCase());
+    setResReferralCode('');
     // Komisi & Scope diset default dari global settings
     setResCommissionPct(globalSettings.defaultCommissionPct || 20);
     setResCommissionScope(globalSettings.defaultScope || 'both');
-    setResBuyerDiscountPct(globalSettings.defaultDiscountPct || 10);
+    setResBuyerDiscountPct(0);
     setResIsActive(true);
     setIsResellerModalOpen(true);
   };
 
   const handleEditReseller = (r: ResellerAccount) => {
     setEditingResellerId(r.id);
-    setResName(r.name);
+    setResName(r.name || '');
     setResUsername(r.username);
     setResPassword(r.password);
-    setResEmail(r.email);
+    setResEmail(r.email || '');
     setResPhone(r.phone);
-    setResPayoutMethod(r.payoutMethod || 'DANA');
+    setResPayoutMethod(r.payoutMethod || 'QRIS');
     setResPayoutAccountNumber(r.payoutAccountNumber || '');
-    setResPayoutAccountName(r.payoutAccountName || r.name);
-    setResReferralCode(r.referralCode);
+    setResPayoutAccountName(r.payoutAccountName || r.username);
+    setResReferralCode(r.referralCode || '');
     setResCommissionPct(r.commissionPct || 20);
     setResCommissionScope(r.commissionScope || 'both');
-    setResBuyerDiscountPct(r.buyerDiscountPct ?? 10);
+    setResBuyerDiscountPct(0);
     setResIsActive(r.isActive);
     setIsResellerModalOpen(true);
   };
 
   const handleDeleteReseller = async (id: string, name: string) => {
-    if (!confirm(`Hapus akun reseller "${name}"? Aksi ini tidak dapat dibatalkan.`)) return;
+    if (!confirm(`Hapus akun reseller "@${name}"? Aksi ini tidak dapat dibatalkan.`)) return;
     await developerDeleteReseller(id);
-    toast({ title: 'Reseller Dihapus', description: `Akun reseller ${name} telah dihapus.` });
+    toast({ title: 'Reseller Dihapus', description: `Akun reseller @${name} telah dihapus.` });
     loadAllData();
   };
 
   const handleSaveReseller = async () => {
-    if (!resName.trim() || !resUsername.trim() || !resPassword.trim()) {
-      toast({ title: 'Data Belum Lengkap', description: 'Nama, username, dan password wajib diisi.', variant: 'destructive' });
+    if (!resUsername.trim() || !resPassword.trim()) {
+      toast({ title: 'Data Belum Lengkap', description: 'Username dan password wajib diisi.', variant: 'destructive' });
       return;
     }
 
     try {
       if (editingResellerId) {
         const res = await developerUpdateReseller(editingResellerId, {
-          name: resName.trim(),
           username: resUsername.trim().toLowerCase(),
           password: resPassword,
-          email: resEmail.trim(),
           phone: resPhone.trim(),
-          payoutMethod: resPayoutMethod,
+          payoutMethod: resPayoutMethod as any,
           payoutAccountNumber: resPayoutAccountNumber.trim(),
-          payoutAccountName: resPayoutAccountName.trim() || resName.trim(),
-          referralCode: resReferralCode.trim().toUpperCase(),
+          payoutAccountName: resPayoutAccountName.trim() || resUsername.trim(),
           // Komisi tidak diubah saat edit (atur komisi saat pembuatan akun saja)
           commissionScope: resCommissionScope,
-          buyerDiscountPct: Number(resBuyerDiscountPct) || 10,
           isActive: resIsActive,
         });
 
         if (res.success) {
-          toast({ title: 'Berhasil Diperbarui', description: `Akun reseller ${resName} berhasil diupdate.` });
+          toast({ title: 'Berhasil Diperbarui', description: `Akun reseller @${resUsername} berhasil diupdate.` });
           setIsResellerModalOpen(false);
           loadAllData();
         } else {
@@ -508,22 +504,18 @@ export const TokoScriptAdmin: React.FC = () => {
         }
       } else {
         const res = await developerCreateReseller({
-          name: resName.trim(),
           username: resUsername.trim().toLowerCase(),
           password: resPassword,
-          email: resEmail.trim(),
           phone: resPhone.trim(),
           payoutMethod: resPayoutMethod,
           payoutAccountNumber: resPayoutAccountNumber.trim(),
-          payoutAccountName: resPayoutAccountName.trim() || resName.trim(),
-          referralCode: resReferralCode.trim().toUpperCase(),
+          payoutAccountName: resPayoutAccountName.trim() || resUsername.trim(),
           commissionPct: Number(resCommissionPct) || 20,
           commissionScope: resCommissionScope,
-          buyerDiscountPct: Number(resBuyerDiscountPct) || 10,
         });
 
         if (res.success) {
-          toast({ title: 'Reseller Dibuat', description: `Akun reseller ${resName} berhasil dibuat secara manual.` });
+          toast({ title: 'Reseller Dibuat', description: `Akun reseller @${resUsername} berhasil dibuat.` });
           setIsResellerModalOpen(false);
           loadAllData();
         } else {
@@ -827,7 +819,7 @@ export const TokoScriptAdmin: React.FC = () => {
               </Button>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
               <div className="p-3 rounded-xl bg-background/60 border border-border/80 space-y-1.5">
                 <Label className="text-xs font-semibold text-foreground flex items-center gap-1.5">
                   <Percent className="w-3.5 h-3.5 text-emerald-400" />
@@ -847,14 +839,14 @@ export const TokoScriptAdmin: React.FC = () => {
                   className="h-8 text-xs font-mono font-bold text-emerald-400 rounded-lg"
                 />
                 <p className="text-[10px] text-muted-foreground">
-                  Ditetapkan saat pembuatan akun reseller otomatis.
+                  Ditetapkan saat pembuatan akun reseller baru.
                 </p>
               </div>
 
               <div className="p-3 rounded-xl bg-background/60 border border-border/80 space-y-1.5">
                 <Label className="text-xs font-semibold text-foreground flex items-center gap-1.5">
                   <ShoppingBag className="w-3.5 h-3.5 text-primary" />
-                  Cakupan Produk Diskon Default
+                  Cakupan Produk Komisi Default
                 </Label>
                 <select
                   value={globalSettings.defaultScope}
@@ -871,30 +863,7 @@ export const TokoScriptAdmin: React.FC = () => {
                   <option value="arexans_tools">Hanya Arexans Tools</option>
                 </select>
                 <p className="text-[10px] text-muted-foreground">
-                  Produk yang dapat komisi & diskon reseller.
-                </p>
-              </div>
-
-              <div className="p-3 rounded-xl bg-background/60 border border-border/80 space-y-1.5">
-                <Label className="text-xs font-semibold text-foreground flex items-center gap-1.5">
-                  <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
-                  Diskon untuk Pembeli (%)
-                </Label>
-                <Input
-                  type="number"
-                  min={0}
-                  max={90}
-                  value={globalSettings.defaultDiscountPct}
-                  onChange={(e) =>
-                    setGlobalSettings({
-                      ...globalSettings,
-                      defaultDiscountPct: Number(e.target.value) || 10,
-                    })
-                  }
-                  className="h-8 text-xs font-mono font-bold text-cyan-400 rounded-lg"
-                />
-                <p className="text-[10px] text-muted-foreground">
-                  Potongan harga jika pembeli memakai referral link.
+                  Produk yang berhak mendapatkan komisi bagi hasil.
                 </p>
               </div>
             </div>
@@ -968,10 +937,9 @@ export const TokoScriptAdmin: React.FC = () => {
               <table className="w-full text-xs">
                 <thead className="bg-muted/50 text-muted-foreground border-b border-border">
                   <tr>
-                    <th className="text-left p-3">Reseller</th>
-                    <th className="text-left p-3">Kode Referral</th>
+                    <th className="text-left p-3">Username Reseller</th>
                     <th className="text-left p-3">Komisi & Scope</th>
-                    <th className="text-left p-3">WhatsApp / Rekening</th>
+                    <th className="text-left p-3">Metode Payout (QRIS/DANA/SeaBank)</th>
                     <th className="text-right p-3">Total Penjualan</th>
                     <th className="text-right p-3">Komisi Aktif</th>
                     <th className="text-right p-3">Total Ditarik</th>
@@ -981,7 +949,7 @@ export const TokoScriptAdmin: React.FC = () => {
                 <tbody className="divide-y divide-border/40">
                   {resellers.length === 0 ? (
                     <tr>
-                      <td colSpan={8} className="p-8 text-center text-muted-foreground">
+                      <td colSpan={7} className="p-8 text-center text-muted-foreground">
                         Belum ada reseller terdaftar (Log Bersih / Dikosongkan). Tambah reseller manual atau beli otomatis via Pakasir (Rp 80.000).
                       </td>
                     </tr>
@@ -989,22 +957,16 @@ export const TokoScriptAdmin: React.FC = () => {
                     resellers.map((r) => (
                       <tr key={r.id} className="hover:bg-muted/20 transition-colors">
                         <td className="p-3">
-                          <div className="font-bold text-foreground flex items-center gap-1.5">
-                            {r.name}
+                          <div className="font-bold text-foreground flex items-center gap-1.5 font-mono">
+                            @{r.username}
                             {!r.isActive && (
-                              <span className="text-[9px] px-1 py-0.2 rounded bg-destructive/20 text-destructive border border-destructive/30">
+                              <span className="text-[9px] px-1 py-0.2 rounded bg-destructive/20 text-destructive border border-destructive/30 font-sans">
                                 Nonaktif
                               </span>
                             )}
                           </div>
-                          <div className="text-[11px] text-muted-foreground font-mono">@{r.username}</div>
                           <span className={`text-[9px] px-1.5 py-0.5 rounded font-mono inline-block mt-0.5 ${r.registeredVia === 'pakasir_purchase' ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30' : 'bg-blue-500/20 text-blue-300 border border-blue-500/30'}`}>
                             {r.registeredVia === 'pakasir_purchase' ? 'Beli Pakasir (80rb)' : 'Manual Developer'}
-                          </span>
-                        </td>
-                        <td className="p-3">
-                          <span className="font-mono px-2 py-0.5 rounded bg-primary/10 text-primary border border-primary/30 font-bold">
-                            {r.referralCode}
                           </span>
                         </td>
                         <td className="p-3">
@@ -1015,14 +977,16 @@ export const TokoScriptAdmin: React.FC = () => {
                           <span className="text-[10px] text-muted-foreground block">
                             {r.commissionScope === 'both' ? 'Keduanya (Tools & Script)' : r.commissionScope === 'toko_script' ? 'Hanya Toko Script' : 'Hanya Arexans Tools'}
                           </span>
-                          <span className="text-[10px] text-cyan-400 font-medium block">
-                            Diskon Pembeli: {r.buyerDiscountPct ?? 10}%
-                          </span>
                         </td>
                         <td className="p-3">
-                          <div>{r.phone}</div>
-                          <div className="text-[11px] text-muted-foreground">
-                            {r.payoutMethod}: {r.payoutAccountNumber} ({r.payoutAccountName})
+                          <div className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                            <span className="px-1.5 py-0.2 rounded bg-primary/10 text-primary font-mono text-[10px]">
+                              {r.payoutMethod || 'QRIS'}
+                            </span>
+                            <span>{r.phone}</span>
+                          </div>
+                          <div className="text-[11px] text-muted-foreground font-mono">
+                            {r.payoutAccountNumber} ({r.payoutAccountName})
                           </div>
                         </td>
                         <td className="p-3 text-right">
@@ -1644,103 +1608,75 @@ export const TokoScriptAdmin: React.FC = () => {
               {editingResellerId ? 'Edit Akun Reseller' : 'Tambah Akun Reseller Manual'}
             </DialogTitle>
             <DialogDescription className="text-xs text-muted-foreground">
-              Atur data akun, komisi bagi hasil, dan cakupan produk yang dapat komisi/diskon reseller.
+              Atur data akun, komisi bagi hasil, dan cakupan produk kemitraan reseller.
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4 pt-2">
             <div className="grid grid-cols-2 gap-2">
               <div className="space-y-1">
-                <Label className="text-xs font-semibold">Nama Lengkap *</Label>
-                <Input
-                  value={resName}
-                  onChange={(e) => setResName(e.target.value)}
-                  placeholder="Contoh: Budi Santoso"
-                  className="h-9 text-xs rounded-xl"
-                />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs font-semibold">Username *</Label>
+                <Label className="text-xs font-semibold">Username Reseller *</Label>
                 <Input
                   value={resUsername}
                   onChange={(e) => setResUsername(e.target.value.toLowerCase())}
                   placeholder="budistore"
                   className="h-9 text-xs rounded-xl"
+                  required
                 />
               </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-2">
               <div className="space-y-1">
-                <Label className="text-xs font-semibold">Password *</Label>
+                <Label className="text-xs font-semibold">Password Akun *</Label>
                 <Input
                   value={resPassword}
                   onChange={(e) => setResPassword(e.target.value)}
-                  placeholder="Password login"
+                  placeholder="Password login portal"
                   className="h-9 text-xs rounded-xl"
-                />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs font-semibold">Kode Referral *</Label>
-                <Input
-                  value={resReferralCode}
-                  onChange={(e) => setResReferralCode(e.target.value.toUpperCase())}
-                  placeholder="AREX-BUDI"
-                  className="h-9 text-xs font-mono uppercase rounded-xl"
+                  required
                 />
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-2">
-              <div className="space-y-1">
-                <Label className="text-xs font-semibold">No. WhatsApp</Label>
-                <Input
-                  value={resPhone}
-                  onChange={(e) => setResPhone(e.target.value)}
-                  placeholder="0812xxxxxxxx"
-                  className="h-9 text-xs rounded-xl"
-                />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs font-semibold">Email</Label>
-                <Input
-                  value={resEmail}
-                  onChange={(e) => setResEmail(e.target.value)}
-                  placeholder="budi@gmail.com"
-                  className="h-9 text-xs rounded-xl"
-                />
-              </div>
+            <div className="space-y-1">
+              <Label className="text-xs font-semibold">No. WhatsApp / HP *</Label>
+              <Input
+                value={resPhone}
+                onChange={(e) => setResPhone(e.target.value)}
+                placeholder="0812xxxxxxxx (untuk koordinasi pencairan)"
+                className="h-9 text-xs rounded-xl"
+                required
+              />
             </div>
 
-            {/* Payout Info */}
-            <div className="p-3 rounded-xl border border-border/70 bg-card/40 space-y-2">
-              <span className="text-[11px] font-bold text-foreground">Rekening / E-Wallet Pencairan Komisi:</span>
+            {/* Payout Info (Wajib QRIS / DANA / SEABANK - QRIS Diutamakan) */}
+            <div className="p-3.5 rounded-xl border border-border/70 bg-card/40 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-bold text-foreground">Rekening / E-Wallet Pencairan Komisi:</span>
+                <span className="text-[10px] text-muted-foreground">Wajib QRIS / DANA / SeaBank</span>
+              </div>
               <div className="grid grid-cols-3 gap-1.5">
                 <select
                   value={resPayoutMethod}
                   onChange={(e) => setResPayoutMethod(e.target.value)}
-                  className="h-8 text-xs rounded-lg bg-background border border-border px-2 text-foreground"
+                  className="h-8 text-xs rounded-lg bg-background border border-border px-2 text-foreground font-semibold"
                 >
+                  <option value="QRIS">QRIS (Diutamakan)</option>
                   <option value="DANA">DANA</option>
-                  <option value="GoPay">GoPay</option>
-                  <option value="OVO">OVO</option>
-                  <option value="ShopeePay">ShopeePay</option>
-                  <option value="BCA">Bank BCA</option>
-                  <option value="BRI">Bank BRI</option>
-                  <option value="Mandiri">Bank Mandiri</option>
+                  <option value="SEABANK">SeaBank</option>
                 </select>
                 <Input
                   value={resPayoutAccountNumber}
                   onChange={(e) => setResPayoutAccountNumber(e.target.value)}
-                  placeholder="No Rekening / HP"
+                  placeholder={resPayoutMethod === 'QRIS' ? 'ID/No HP QRIS / Link' : 'No. HP / No. Rekening'}
                   className="col-span-2 h-8 text-xs rounded-lg"
+                  required
                 />
               </div>
               <Input
                 value={resPayoutAccountName}
                 onChange={(e) => setResPayoutAccountName(e.target.value)}
-                placeholder="Atas Nama Rekening"
+                placeholder="Atas Nama Rekening / Merchant QRIS"
                 className="h-8 text-xs rounded-lg"
+                required
               />
             </div>
 

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { TokoScriptProduct, ScriptPackage } from '@/types/tokoScript';
-import { recordResellerSale, checkResellerDiscountEligibility, getScriptRawId } from '@/lib/tokoScriptStore';
+import { getScriptRawId } from '@/lib/tokoScriptStore';
 import { getMaintenanceState, isDeveloperTesting } from '@/lib/maintenanceStore';
 import { supabase } from '@/integrations/supabase/client';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
@@ -34,28 +34,12 @@ export const TokoScriptOrderModal: React.FC<TokoScriptOrderModalProps> = ({
   isOpen,
   onClose,
   product,
-  resellerCode,
   onOpenQris,
 }) => {
   const [licenseKey, setLicenseKey] = useState('');
   const [selectedPackageId, setSelectedPackageId] = useState<string>('');
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
-  const [discountInfo, setDiscountInfo] = useState<{
-    eligible: boolean;
-    discountPct: number;
-    reseller: any;
-    message?: string;
-  }>({ eligible: false, discountPct: 0, reseller: null });
-
-  // Check reseller discount eligibility for Toko Script
-  useEffect(() => {
-    if (resellerCode && isOpen) {
-      checkResellerDiscountEligibility(resellerCode, 'toko_script').then(setDiscountInfo);
-    } else {
-      setDiscountInfo({ eligible: false, discountPct: 0, reseller: null });
-    }
-  }, [resellerCode, isOpen]);
 
   // When modal opens or product changes, pick first active package
   useEffect(() => {
@@ -115,11 +99,7 @@ export const TokoScriptOrderModal: React.FC<TokoScriptOrderModalProps> = ({
 
     try {
       const txId = 'TXS-' + Math.random().toString(36).slice(2, 8).toUpperCase() + Date.now().toString().slice(-4);
-      const originalAmount = selectedPackage.price;
-      const discountPct = discountInfo.eligible ? discountInfo.discountPct : 0;
-      const amount = discountPct > 0
-        ? Math.round(originalAmount * (1 - discountPct / 100))
-        : originalAmount;
+      const amount = selectedPackage.price;
       const deviceId = localStorage.getItem('arexans_device_id') || 'DEV-' + Math.random().toString(36).slice(2, 8).toUpperCase();
       const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
 
@@ -231,25 +211,6 @@ export const TokoScriptOrderModal: React.FC<TokoScriptOrderModalProps> = ({
         </DialogHeader>
 
         <div className="space-y-4 pt-1">
-          {/* Reseller Discount Banner */}
-          {discountInfo.eligible && discountInfo.discountPct > 0 && (
-            <div className="p-2.5 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-between text-xs">
-              <span className="text-emerald-400 font-semibold flex items-center gap-1.5">
-                <Sparkles className="w-3.5 h-3.5" />
-                Diskon Reseller {discountInfo.discountPct}% Aktif!
-              </span>
-              <span className="text-[11px] text-muted-foreground font-mono">
-                @{discountInfo.reseller?.username || resellerCode}
-              </span>
-            </div>
-          )}
-
-          {resellerCode && !discountInfo.eligible && (
-            <div className="p-2 rounded-xl bg-muted/40 border border-border text-[11px] text-muted-foreground">
-              {discountInfo.message || 'Kode referral ini tidak berlaku untuk produk Toko Script.'}
-            </div>
-          )}
-
           {/* 1. KOLOM KEY CUSTOM / ACAK */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
@@ -305,9 +266,6 @@ export const TokoScriptOrderModal: React.FC<TokoScriptOrderModalProps> = ({
                 {activePackages.map((pkg) => {
                   const isSelected = selectedPackage?.id === pkg.id;
                   const basePrice = pkg.price;
-                  const discountedPrice = discountInfo.eligible && discountInfo.discountPct > 0
-                    ? Math.round(basePrice * (1 - discountInfo.discountPct / 100))
-                    : basePrice;
 
                   return (
                     <label
@@ -338,20 +296,9 @@ export const TokoScriptOrderModal: React.FC<TokoScriptOrderModalProps> = ({
                         </div>
                       </div>
                       <div className="text-right">
-                        {discountInfo.eligible && discountInfo.discountPct > 0 ? (
-                          <>
-                            <div className="text-[10px] text-muted-foreground line-through font-mono">
-                              {formatRupiah(basePrice)}
-                            </div>
-                            <div className="text-xs font-extrabold text-emerald-400 font-mono">
-                              {formatRupiah(discountedPrice)}
-                            </div>
-                          </>
-                        ) : (
-                          <div className="text-xs font-extrabold text-primary font-mono">
-                            {formatRupiah(basePrice)}
-                          </div>
-                        )}
+                        <div className="text-xs font-extrabold text-primary font-mono">
+                          {formatRupiah(basePrice)}
+                        </div>
                         <div className="text-[10px] text-muted-foreground">
                           {pkg.days >= 999999 ? 'Lifetime' : `${pkg.days} hari`}
                         </div>
@@ -374,25 +321,9 @@ export const TokoScriptOrderModal: React.FC<TokoScriptOrderModalProps> = ({
             <div className="flex items-center justify-between text-sm">
               <span className="text-xs text-muted-foreground">Total Tagihan:</span>
               <div className="text-right">
-                {discountInfo.eligible && discountInfo.discountPct > 0 && selectedPackage && (
-                  <span className="text-xs text-muted-foreground line-through mr-2 font-mono">
-                    {formatRupiah(selectedPackage.price)}
-                  </span>
-                )}
                 <span className="font-mono text-base font-bold text-primary">
-                  {selectedPackage
-                    ? formatRupiah(
-                        discountInfo.eligible && discountInfo.discountPct > 0
-                          ? Math.round(selectedPackage.price * (1 - discountInfo.discountPct / 100))
-                          : selectedPackage.price
-                      )
-                    : 'Rp 0'}
+                  {selectedPackage ? formatRupiah(selectedPackage.price) : 'Rp 0'}
                 </span>
-                {discountInfo.eligible && discountInfo.discountPct > 0 && (
-                  <span className="block text-[10px] text-emerald-400 font-medium">
-                    Hemat {discountInfo.discountPct}% (Diskon Reseller)
-                  </span>
-                )}
               </div>
             </div>
 

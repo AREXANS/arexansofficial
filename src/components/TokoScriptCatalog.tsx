@@ -123,23 +123,6 @@ export const TokoScriptCatalog: React.FC<TokoScriptCatalogProps> = ({
 
   return (
     <div className="w-full space-y-6">
-      {/* Reseller Banner if active */}
-      {resellerCode && (
-        <div className="glass-card p-3 rounded-xl border-emerald-500/40 bg-emerald-950/20 flex items-center justify-between">
-          <div className="flex items-center gap-2 text-xs text-emerald-300">
-            <UserCheck className="w-4 h-4 text-emerald-400" />
-            <span>
-              Anda belanja melalui Mitra Reseller:{' '}
-              <strong className="text-white font-mono">{resellerCode}</strong>
-              {resellerName ? ` (${resellerName})` : ''}
-            </span>
-          </div>
-          <Badge variant="outline" className="text-[10px] border-emerald-500/40 text-emerald-300">
-            Komisi Bagi Hasil Aktif
-          </Badge>
-        </div>
-      )}
-
       {/* Catalog Title Banner */}
       <div className="text-center space-y-2">
         <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-primary/10 border border-primary/25 text-primary text-xs font-semibold">

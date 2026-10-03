@@ -826,6 +826,8 @@ const Admin = () => {
   const formatRupiah = (n: number) => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(n);
 
   const paymentKeys = [
+    'maintenance_mode', 'product_maintenance_state',
+    'toko_scripts_catalog', 'reseller_accounts_data_v2', 'reseller_sales_data_v2', 'reseller_withdrawals_data_v2', 'reseller_global_settings_v2',
     'payment_gateway', 'pakasir_slug', 'pakasir_api_key', 'pakasir_mode', 'pakasir_webhook_key',
     'arexanspay_api_key', 'arexanspay_qris_id', 'arexanspay_webhook_key', 'arexanspay_number_id',
     'casaku_license_key', 'casaku_qris_id', 'casaku_webhook_secret', 'casaku_webhook_key',
@@ -1041,139 +1043,120 @@ const Admin = () => {
                     </div>
                   </div>
 
-                  {/* 4 Switch Controls */}
+                  {/* 2 Focused, Non-Duplicate Switch Controls */}
                   <div className="space-y-4 pt-1">
-                    {/* Switch 1: Global Maintenance (Semuanya) */}
-                    <div className="p-4 rounded-xl border border-destructive/50 bg-destructive/10 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2">
-                          <Label className="text-sm font-bold text-foreground">
-                            1. Kunci Semua Produk & Bekukan Semua Key (Semuanya)
+                    {/* Master Switch: Global Maintenance */}
+                    <div className={`p-4 rounded-2xl border transition-all ${
+                      maintenanceState.globalMaintenance
+                        ? 'border-destructive/60 bg-destructive/15 shadow-lg shadow-destructive/10'
+                        : 'border-border/80 bg-card/60'
+                    } flex flex-col sm:flex-row sm:items-center justify-between gap-4`}>
+                      <div className="space-y-1.5 flex-1">
+                        <div className="flex items-center gap-2.5">
+                          <Label className="text-base font-bold text-foreground flex items-center gap-2">
+                            <Wrench className={`w-4 h-4 ${maintenanceState.globalMaintenance ? 'text-destructive animate-pulse' : 'text-primary'}`} />
+                            Mode Maintenance Sistem (Anti-Rugi)
                           </Label>
-                          {maintenanceState.globalMaintenance && (
-                            <span className="text-[10px] px-2 py-0.5 rounded-md bg-destructive text-destructive-foreground font-bold animate-pulse">
-                              AKTIF (TERKUNCI)
+                          {maintenanceState.globalMaintenance ? (
+                            <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-destructive text-destructive-foreground font-bold animate-pulse">
+                              🔴 MAINTENANCE AKTIF
+                            </span>
+                          ) : (
+                            <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-bold">
+                              🟢 SISTEM NORMAL
                             </span>
                           )}
                         </div>
                         <p className="text-xs text-muted-foreground leading-relaxed">
-                          Mengunci seluruh pembelian publik di Arexans Tools & Toko Script. Seluruh key pelanggan otomatis dibekukan sementara. Saat dinonaktifkan kembali, durasi key otomatis dilanjutkan secara utuh tanpa ada yang rugi.
+                          {maintenanceState.globalMaintenance
+                            ? 'Seluruh transaksi publik sedang DITUTUP sementara. Durasi seluruh key pelanggan otomatis DIBEKUKAN (di-pause) agar pembeli tidak ada yang rugi.'
+                            : 'Kunci seluruh pembelian publik di Arexans Tools & Toko Script. Ketika diaktifkan, seluruh key pelanggan otomatis dibekukan dan dilanjutkan kembali saat dimatikan.'}
                         </p>
                       </div>
-                      <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-3 self-end sm:self-center">
                         <Switch
                           checked={maintenanceState.globalMaintenance}
                           onCheckedChange={handleToggleGlobalMaintenance}
                           disabled={maintenanceLoading}
+                          className="scale-110"
                         />
                       </div>
                     </div>
 
-                    {/* Switch 2: Arexans Tools Maintenance */}
-                    <div className="p-4 rounded-xl border border-border/80 bg-card/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2">
-                          <Label className="text-sm font-bold text-foreground">
-                            2. Kunci Maintenance Arexans Tools Saja
+                    {/* Mode Testing Developer */}
+                    <div className={`p-4 rounded-2xl border transition-all ${
+                      devTestingBypass
+                        ? 'border-primary/50 bg-primary/10 shadow-lg shadow-primary/10'
+                        : 'border-border/80 bg-card/60'
+                    } flex flex-col sm:flex-row sm:items-center justify-between gap-4`}>
+                      <div className="space-y-1.5 flex-1">
+                        <div className="flex items-center gap-2.5">
+                          <Label className="text-sm font-bold text-foreground flex items-center gap-2">
+                            <Shield className={`w-4 h-4 ${devTestingBypass ? 'text-primary animate-pulse' : 'text-muted-foreground'}`} />
+                            Mode Testing Developer (Bypass Pembelian)
                           </Label>
-                          {maintenanceState.arexansToolsMaintenance && (
-                            <span className="text-[10px] px-2 py-0.5 rounded-md bg-amber-500 text-black font-bold">
-                              TERKUNCI
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-xs text-muted-foreground leading-relaxed">
-                          Publik tidak bisa membeli paket NORMAL, VIP, LIFETIME. Seluruh key Arexans Tools otomatis dibekukan sementara dan dilanjutkan setelah perbaikan selesai.
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <Switch
-                          checked={maintenanceState.arexansToolsMaintenance}
-                          onCheckedChange={handleToggleArexansToolsMaintenance}
-                          disabled={maintenanceLoading}
-                        />
-                      </div>
-                    </div>
-
-                    {/* Switch 3: Toko Script Maintenance (Semua) */}
-                    <div className="p-4 rounded-xl border border-border/80 bg-card/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2">
-                          <Label className="text-sm font-bold text-foreground">
-                            3. Kunci Maintenance Semua Toko Script
-                          </Label>
-                          {maintenanceState.tokoScriptsMaintenance && (
-                            <span className="text-[10px] px-2 py-0.5 rounded-md bg-amber-500 text-black font-bold">
-                              TERKUNCI
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-xs text-muted-foreground leading-relaxed">
-                          Publik tidak bisa membeli script apapun di katalog Toko Script. (Bisa juga dikunci per-produk lewat tab Toko Script & Reseller).
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <Switch
-                          checked={maintenanceState.tokoScriptsMaintenance}
-                          onCheckedChange={handleToggleTokoScriptsMaintenance}
-                          disabled={maintenanceLoading}
-                        />
-                      </div>
-                    </div>
-
-                    {/* Switch 4: Mode Testing Developer */}
-                    <div className="p-4 rounded-xl border border-primary/40 bg-primary/5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2">
-                          <Label className="text-sm font-bold text-primary flex items-center gap-1.5">
-                            <Shield className="w-4 h-4" />
-                            4. Mode Testing Developer (Bypass Pembelian saat Maintenance)
-                          </Label>
-                          {devTestingBypass && (
-                            <span className="text-[10px] px-2 py-0.5 rounded-md bg-primary text-primary-foreground font-bold">
+                          {devTestingBypass ? (
+                            <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-primary text-primary-foreground font-bold">
                               TESTING AKTIF
                             </span>
+                          ) : (
+                            <span className="text-[10px] px-2 py-0.5 rounded-md bg-muted text-muted-foreground font-medium">
+                              NONAKTIF
+                            </span>
                           )}
                         </div>
                         <p className="text-xs text-muted-foreground leading-relaxed">
-                          Sesuai kebutuhan: <em>"hanya developer yang bisa testing public gabisa beli produknya dulu"</em>. Ketika aktif, Anda sebagai developer dapat mengakses halaman utama, memilih paket, dan testing order/checkout meskipun maintenance publik sedang aktif.
+                          Ketika aktif, Anda sebagai developer tetap dapat mengakses halaman utama, memilih paket, dan testing order/checkout meskipun sistem sedang dalam mode maintenance publik.
                         </p>
                       </div>
-                      <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-3 self-end sm:self-center">
                         <Switch
                           checked={devTestingBypass}
                           onCheckedChange={handleToggleDevTesting}
                         />
                       </div>
                     </div>
-                  </div>
 
-                  {/* Manual Quick Action Buttons */}
-                  <div className="pt-3 border-t border-border/60 flex flex-wrap items-center justify-between gap-2">
-                    <span className="text-xs text-muted-foreground">
-                      Aksi Cepat Pembekuan Manual:
-                    </span>
-                    <div className="flex gap-2">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={handleManualFreezeAll}
-                        disabled={maintenanceLoading || keyStats.frozen === keyStats.total}
-                        className="text-xs rounded-xl border-blue-500/40 text-blue-400 hover:bg-blue-500/10 gap-1.5"
-                      >
-                        <Pause className="w-3.5 h-3.5" />
-                        Bekukan Semua Key
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={handleManualUnfreezeAll}
-                        disabled={maintenanceLoading || keyStats.frozen === 0}
-                        className="text-xs rounded-xl border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/10 gap-1.5"
-                      >
-                        <Play className="w-3.5 h-3.5" />
-                        Lanjutkan Semua Key
-                      </Button>
+                    {/* Kontrol Kunci Parsial (Arexans Tools / Toko Script) */}
+                    <div className="p-3.5 rounded-xl border border-border/60 bg-muted/20">
+                      <span className="text-xs font-semibold text-muted-foreground block mb-2.5">
+                        Kunci Maintenance Parsial (Opsional per-layanan):
+                      </span>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div className="flex items-center justify-between p-2.5 rounded-lg bg-card/60 border border-border/70">
+                          <div className="space-y-0.5 pr-2">
+                            <span className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                              Arexans Tools
+                              {maintenanceState.arexansToolsMaintenance && (
+                                <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-400 font-bold">Kunci</span>
+                              )}
+                            </span>
+                            <span className="text-[10px] text-muted-foreground block">Paket Normal, VIP, Lifetime</span>
+                          </div>
+                          <Switch
+                            checked={maintenanceState.arexansToolsMaintenance}
+                            onCheckedChange={handleToggleArexansToolsMaintenance}
+                            disabled={maintenanceLoading || maintenanceState.globalMaintenance}
+                          />
+                        </div>
+
+                        <div className="flex items-center justify-between p-2.5 rounded-lg bg-card/60 border border-border/70">
+                          <div className="space-y-0.5 pr-2">
+                            <span className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                              Toko Script
+                              {maintenanceState.tokoScriptsMaintenance && (
+                                <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-400 font-bold">Kunci</span>
+                              )}
+                            </span>
+                            <span className="text-[10px] text-muted-foreground block">Semua katalog script publik</span>
+                          </div>
+                          <Switch
+                            checked={maintenanceState.tokoScriptsMaintenance}
+                            onCheckedChange={handleToggleTokoScriptsMaintenance}
+                            disabled={maintenanceLoading || maintenanceState.globalMaintenance}
+                          />
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </CardContent>

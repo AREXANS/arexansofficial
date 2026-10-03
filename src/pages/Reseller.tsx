@@ -68,16 +68,13 @@ const Reseller: React.FC = () => {
   const [loginIdentifier, setLoginIdentifier] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
 
-  // Register form state (Beli Akun via Pakasir)
-  const [regName, setRegName] = useState('');
+  // Register form state (Beli Akun via Pakasir - Tanpa Nama Lengkap, Tanpa Email, Tanpa Referral)
   const [regUsername, setRegUsername] = useState('');
-  const [regEmail, setRegEmail] = useState('');
   const [regPhone, setRegPhone] = useState('');
   const [regPassword, setRegPassword] = useState('');
-  const [regPayoutMethod, setRegPayoutMethod] = useState('DANA');
+  const [regPayoutMethod, setRegPayoutMethod] = useState<'QRIS' | 'DANA' | 'SEABANK'>('QRIS');
   const [regAccountNumber, setRegAccountNumber] = useState('');
   const [regAccountName, setRegAccountName] = useState('');
-  const [regReferralCode, setRegReferralCode] = useState('');
 
   // Pakasir Payment Modal State
   const [pakasirModalOpen, setPakasirModalOpen] = useState(false);
@@ -94,14 +91,11 @@ const Reseller: React.FC = () => {
   // Payout dialog state
   const [payoutModalOpen, setPayoutModalOpen] = useState(false);
   const [payoutAmount, setPayoutAmount] = useState<number>(0);
-  const [payoutMethod, setPayoutMethod] = useState('');
+  const [payoutMethod, setPayoutMethod] = useState<'QRIS' | 'DANA' | 'SEABANK' | string>('QRIS');
   const [payoutNumber, setPayoutNumber] = useState('');
   const [payoutName, setPayoutName] = useState('');
   const [payoutNotes, setPayoutNotes] = useState('');
   const [payoutSubmitting, setPayoutSubmitting] = useState(false);
-
-  const [copiedLink, setCopiedLink] = useState(false);
-  const [copiedCode, setCopiedCode] = useState(false);
 
   useEffect(() => {
     const session = getCurrentResellerSession();
@@ -142,7 +136,7 @@ const Reseller: React.FC = () => {
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!loginIdentifier.trim() || !loginPassword.trim()) {
-      toast({ title: 'Mohon Lengkapi', description: 'Masukkan Username/Email dan Password.', variant: 'destructive' });
+      toast({ title: 'Mohon Lengkapi', description: 'Masukkan Username dan Password.', variant: 'destructive' });
       return;
     }
 
@@ -152,7 +146,7 @@ const Reseller: React.FC = () => {
 
     if (res.success && res.account) {
       setCurrentReseller(res.account);
-      toast({ title: 'Login Berhasil', description: `Selamat datang kembali, ${res.account.name}!` });
+      toast({ title: 'Login Berhasil', description: `Selamat datang kembali, @${res.account.username}!` });
       loadResellerData(res.account.id);
     } else {
       toast({ title: 'Login Gagal', description: res.message || 'Periksa kembali data Anda.', variant: 'destructive' });
@@ -162,25 +156,20 @@ const Reseller: React.FC = () => {
   // Submit beli akun reseller otomatis Rp 80.000 via Pakasir
   const handlePurchaseResellerPakasir = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!regName.trim() || !regUsername.trim() || !regEmail.trim() || !regPassword.trim() || !regAccountNumber.trim()) {
-      toast({ title: 'Data Belum Lengkap', description: 'Mohon isi semua kolom yang diperlukan.', variant: 'destructive' });
+    if (!regUsername.trim() || !regPhone.trim() || !regPassword.trim() || !regAccountNumber.trim() || !regAccountName.trim()) {
+      toast({ title: 'Data Belum Lengkap', description: 'Mohon lengkapi username, no. whatsapp, password, dan info pembayaran.', variant: 'destructive' });
       return;
     }
-
-    const code = regReferralCode.trim() || ('AREX-' + regUsername.trim().slice(0, 5).toUpperCase());
 
     setLoading(true);
     try {
       const order = await createPakasirResellerOrder({
-        name: regName.trim(),
         username: regUsername.trim().toLowerCase(),
-        email: regEmail.trim(),
         phone: regPhone.trim(),
         password: regPassword,
         payoutMethod: regPayoutMethod,
         payoutAccountNumber: regAccountNumber.trim(),
-        payoutAccountName: regAccountName.trim() || regName.trim(),
-        referralCode: code,
+        payoutAccountName: regAccountName.trim(),
         commissionPct: 20, // default komisi
         commissionScope: 'both', // default scope semua produk
       });
@@ -276,46 +265,20 @@ const Reseller: React.FC = () => {
     return 'Rp ' + (val || 0).toLocaleString('id-ID');
   };
 
-  const referralLink = currentReseller
-    ? `${window.location.origin}/?tab=toko&ref=${encodeURIComponent(currentReseller.referralCode)}`
-    : '';
-
-  const copyReferralLink = () => {
-    if (!referralLink) return;
-    navigator.clipboard.writeText(referralLink);
-    setCopiedLink(true);
-    setTimeout(() => setCopiedLink(false), 2000);
-    toast({ title: 'Link Disalin!', description: 'Link referral Anda siap dibagikan ke pembeli.' });
-  };
-
-  const copyReferralCode = () => {
-    if (!currentReseller) return;
-    navigator.clipboard.writeText(currentReseller.referralCode);
-    setCopiedCode(true);
-    setTimeout(() => setCopiedCode(false), 2000);
-    toast({ title: 'Kode Disalin!', description: `Kode ${currentReseller.referralCode} telah disalin.` });
-  };
-
-  const shareViaWhatsApp = () => {
-    if (!referralLink || !currentReseller) return;
-    const text = `Halo! Beli script Roblox executor resmi & bergaransi di Arexans Tools. Beli lewat link saya untuk diskon & key instan:\n${referralLink}\nKode Referral: ${currentReseller.referralCode}`;
-    window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(text)}`, '_blank');
-  };
-
   const handleOpenPayoutModal = () => {
     if (!currentReseller) return;
     if (currentReseller.activeCommission <= 0) {
       toast({
         title: 'Saldo Masih Kosong',
-        description: 'Belum ada komisi bagi hasil yang bisa ditarik. Bagikan link jualan Anda untuk mendapatkan komisi!',
+        description: 'Belum ada komisi bagi hasil yang bisa ditarik.',
         variant: 'destructive',
       });
       return;
     }
     setPayoutAmount(currentReseller.activeCommission);
-    setPayoutMethod(currentReseller.payoutMethod || 'DANA');
+    setPayoutMethod(currentReseller.payoutMethod || 'QRIS');
     setPayoutNumber(currentReseller.payoutAccountNumber || '');
-    setPayoutName(currentReseller.payoutAccountName || currentReseller.name);
+    setPayoutName(currentReseller.payoutAccountName || currentReseller.username);
     setPayoutNotes('Pencairan komisi bagi hasil reseller');
     setPayoutModalOpen(true);
   };
@@ -511,30 +474,19 @@ const Reseller: React.FC = () => {
                   </div>
 
                   <form onSubmit={handlePurchaseResellerPakasir} className="space-y-3">
-                    <div className="space-y-1">
-                      <Label className="text-xs font-semibold">Nama Lengkap / Brand *</Label>
-                      <Input
-                        value={regName}
-                        onChange={(e) => setRegName(e.target.value)}
-                        placeholder="Contoh: Alex Reseller"
-                        className="h-9 text-xs rounded-xl"
-                        required
-                      />
-                    </div>
-
                     <div className="grid grid-cols-2 gap-2">
                       <div className="space-y-1">
-                        <Label className="text-xs font-semibold">Username *</Label>
+                        <Label className="text-xs font-semibold">Username Reseller *</Label>
                         <Input
                           value={regUsername}
                           onChange={(e) => setRegUsername(e.target.value.toLowerCase())}
-                          placeholder="alexstore"
+                          placeholder="budistore"
                           className="h-9 text-xs rounded-xl"
                           required
                         />
                       </div>
                       <div className="space-y-1">
-                        <Label className="text-xs font-semibold">No. WhatsApp *</Label>
+                        <Label className="text-xs font-semibold">No. WhatsApp / HP *</Label>
                         <Input
                           value={regPhone}
                           onChange={(e) => setRegPhone(e.target.value)}
@@ -546,19 +498,7 @@ const Reseller: React.FC = () => {
                     </div>
 
                     <div className="space-y-1">
-                      <Label className="text-xs font-semibold">Email *</Label>
-                      <Input
-                        type="email"
-                        value={regEmail}
-                        onChange={(e) => setRegEmail(e.target.value)}
-                        placeholder="alex@gmail.com"
-                        className="h-9 text-xs rounded-xl"
-                        required
-                      />
-                    </div>
-
-                    <div className="space-y-1">
-                      <Label className="text-xs font-semibold">Password *</Label>
+                      <Label className="text-xs font-semibold">Password Akun *</Label>
                       <Input
                         type="password"
                         value={regPassword}
@@ -569,50 +509,67 @@ const Reseller: React.FC = () => {
                       />
                     </div>
 
-                    {/* Payout Info */}
-                    <div className="p-3 rounded-xl border border-border/70 bg-card/40 space-y-2">
-                      <span className="text-[11px] font-bold text-foreground flex items-center gap-1">
-                        <Wallet className="w-3.5 h-3.5 text-primary" />
-                        Rekening / E-Wallet Pencairan Komisi:
-                      </span>
-                      <div className="grid grid-cols-3 gap-1.5">
-                        <select
-                          value={regPayoutMethod}
-                          onChange={(e) => setRegPayoutMethod(e.target.value)}
-                          className="h-8 text-xs rounded-lg bg-background border border-border px-2 text-foreground"
-                        >
-                          <option value="DANA">DANA</option>
-                          <option value="GoPay">GoPay</option>
-                          <option value="OVO">OVO</option>
-                          <option value="ShopeePay">ShopeePay</option>
-                          <option value="BCA">Bank BCA</option>
-                          <option value="BRI">Bank BRI</option>
-                          <option value="Mandiri">Bank Mandiri</option>
-                        </select>
+                    {/* Payout Info (Wajib QRIS / DANA / SEABANK - QRIS Diutamakan) */}
+                    <div className="p-3.5 rounded-xl border border-border/80 bg-card/50 space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                          <Wallet className="w-3.5 h-3.5 text-primary" />
+                          Rekening / E-Wallet Pencairan Komisi:
+                        </span>
+                        <span className="text-[10px] text-muted-foreground">Wajib QRIS / DANA / SeaBank</span>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                        <div className="sm:col-span-1">
+                          <Label className="text-[10px] text-muted-foreground block mb-1">Metode Payout *</Label>
+                          <select
+                            value={regPayoutMethod}
+                            onChange={(e: any) => setRegPayoutMethod(e.target.value)}
+                            className="w-full h-8 text-xs rounded-lg bg-background border border-primary/40 px-2 text-foreground font-semibold"
+                          >
+                            <option value="QRIS">QRIS (Diutamakan / Mudah)</option>
+                            <option value="DANA">DANA</option>
+                            <option value="SEABANK">SeaBank</option>
+                          </select>
+                        </div>
+                        <div className="sm:col-span-2">
+                          <Label className="text-[10px] text-muted-foreground block mb-1">
+                            {regPayoutMethod === 'QRIS'
+                              ? 'Nomor HP QRIS / Link / String QRIS *'
+                              : regPayoutMethod === 'DANA'
+                              ? 'Nomor Akun DANA (08xxxxxxxx) *'
+                              : 'Nomor Rekening SeaBank *'}
+                          </Label>
+                          <Input
+                            value={regAccountNumber}
+                            onChange={(e) => setRegAccountNumber(e.target.value)}
+                            placeholder={
+                              regPayoutMethod === 'QRIS'
+                                ? 'No HP QRIS atau Link/String QRIS'
+                                : regPayoutMethod === 'DANA'
+                                ? '08xxxxxxxxxx'
+                                : 'No Rekening SeaBank'
+                            }
+                            className="h-8 text-xs rounded-lg"
+                            required
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <Label className="text-[10px] text-muted-foreground block mb-1">
+                          {regPayoutMethod === 'QRIS'
+                            ? 'Nama Merchant / Pemilik QRIS *'
+                            : 'Atas Nama Rekening / Pemilik Akun *'}
+                        </Label>
                         <Input
-                          value={regAccountNumber}
-                          onChange={(e) => setRegAccountNumber(e.target.value)}
-                          placeholder="No HP / Rekening"
-                          className="col-span-2 h-8 text-xs rounded-lg"
+                          value={regAccountName}
+                          onChange={(e) => setRegAccountName(e.target.value)}
+                          placeholder="Nama pemilik akun pencairan"
+                          className="h-8 text-xs rounded-lg"
                           required
                         />
                       </div>
-                      <Input
-                        value={regAccountName}
-                        onChange={(e) => setRegAccountName(e.target.value)}
-                        placeholder="Atas Nama Rekening (misal: Alex Saputra)"
-                        className="h-8 text-xs rounded-lg"
-                      />
-                    </div>
-
-                    <div className="space-y-1">
-                      <Label className="text-xs font-semibold">Kode Referral Pilihan (Opsional)</Label>
-                      <Input
-                        value={regReferralCode}
-                        onChange={(e) => setRegReferralCode(e.target.value.toUpperCase())}
-                        placeholder="Contoh: AREX-ALEX"
-                        className="h-9 text-xs font-mono uppercase tracking-wider rounded-xl"
-                      />
                     </div>
 
                     <Button
@@ -657,7 +614,7 @@ const Reseller: React.FC = () => {
                   </span>
                 </div>
                 <h2 className="text-xl md:text-2xl font-bold font-display text-foreground">
-                  Halo, {currentReseller.name}!
+                  Halo, @{currentReseller.username}!
                 </h2>
                 <div className="text-xs text-muted-foreground flex flex-wrap items-center gap-2 pt-0.5">
                   <span className="flex items-center gap-1">
@@ -675,11 +632,6 @@ const Reseller: React.FC = () => {
                         ? 'Hanya Toko Script'
                         : 'Hanya Arexans Tools'}
                     </strong>
-                  </span>
-                  <span>•</span>
-                  <span>
-                    Diskon Pembeli:{' '}
-                    <strong className="text-cyan-400 font-bold">{currentReseller.buyerDiscountPct ?? 10}%</strong>
                   </span>
                 </div>
               </div>
@@ -706,57 +658,45 @@ const Reseller: React.FC = () => {
               </div>
             </div>
 
-            {/* REFERRAL LINK BOX */}
-            <div className="glass-card rounded-2xl p-5 border-primary/30 bg-primary/5 space-y-3">
+            {/* RESELLER ACCOUNT & PAYOUT INFORMATION CARD */}
+            <div className="glass-card rounded-2xl p-5 border-border/80 bg-card/60 space-y-4">
               <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-foreground flex items-center gap-1.5">
-                  <Share2 className="w-4 h-4 text-primary" />
-                  Link & Kode Penjualan Script Anda
+                <span className="text-xs font-bold text-foreground flex items-center gap-2">
+                  <Wallet className="w-4 h-4 text-emerald-400" />
+                  Informasi Akun & Rekening Pencairan Komisi Reseller
                 </span>
-                <Badge variant="outline" className="border-primary/40 text-primary font-mono text-xs">
-                  {currentReseller.referralCode}
-                </Badge>
+                <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 font-bold border border-emerald-500/30">
+                  {currentReseller.payoutMethod || 'QRIS'}
+                </span>
               </div>
 
-              <p className="text-xs text-muted-foreground leading-relaxed">
-                Bagikan link ini kepada calon pembeli. Setiap pesanan script atau tools yang berasal dari link/kode Anda otomatis mencatatkan komisi bagi hasil sebesar <strong>{currentReseller.commissionPct || 20}%</strong>!
-              </p>
-
-              <div className="flex flex-col sm:flex-row gap-2">
-                <div className="flex-1 relative">
-                  <Input
-                    readOnly
-                    value={referralLink}
-                    className="h-10 text-xs font-mono bg-background/80 border-primary/30 text-foreground pr-10 rounded-xl"
-                  />
-                  <button
-                    type="button"
-                    onClick={copyReferralLink}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-muted-foreground hover:text-primary transition"
-                    title="Salin link"
-                  >
-                    {copiedLink ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
-                  </button>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="p-3 rounded-xl bg-background/60 border border-border/70 space-y-1">
+                  <span className="text-[10px] text-muted-foreground block">Metode Pembayaran Payout:</span>
+                  <div className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                    <span className="px-1.5 py-0.5 rounded bg-primary/10 text-primary font-mono font-bold">
+                      {currentReseller.payoutMethod}
+                    </span>
+                    {currentReseller.payoutMethod === 'QRIS' && (
+                      <span className="text-[10px] text-emerald-400 font-medium">(Diutamakan)</span>
+                    )}
+                  </div>
                 </div>
 
-                <div className="flex gap-2">
-                  <Button
-                    type="button"
-                    onClick={copyReferralCode}
-                    variant="outline"
-                    className="h-10 text-xs rounded-xl border-primary/40 text-primary hover:bg-primary/10 gap-1.5"
-                  >
-                    {copiedCode ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                    Salin Kode
-                  </Button>
-                  <Button
-                    type="button"
-                    onClick={shareViaWhatsApp}
-                    className="h-10 text-xs font-bold rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white gap-1.5 shadow-sm"
-                  >
-                    <Share2 className="w-3.5 h-3.5" />
-                    Share WhatsApp
-                  </Button>
+                <div className="p-3 rounded-xl bg-background/60 border border-border/70 space-y-1">
+                  <span className="text-[10px] text-muted-foreground block">
+                    {currentReseller.payoutMethod === 'QRIS' ? 'ID / No. HP / Link QRIS:' : 'No. HP / No. Rekening:'}
+                  </span>
+                  <div className="text-xs font-bold font-mono text-foreground break-all">
+                    {currentReseller.payoutAccountNumber || '-'}
+                  </div>
+                </div>
+
+                <div className="p-3 rounded-xl bg-background/60 border border-border/70 space-y-1">
+                  <span className="text-[10px] text-muted-foreground block">Atas Nama Rekening / Merchant:</span>
+                  <div className="text-xs font-bold text-foreground">
+                    {currentReseller.payoutAccountName || currentReseller.username}
+                  </div>
                 </div>
               </div>
             </div>
@@ -843,7 +783,7 @@ const Reseller: React.FC = () => {
                       Riwayat Penjualan Anda
                     </h3>
                     <p className="text-[11px] text-muted-foreground">
-                      Daftar transaksi yang menggunakan kode referral Anda.
+                      Daftar transaksi dan penjualan akun reseller Anda.
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
@@ -877,7 +817,7 @@ const Reseller: React.FC = () => {
                       {sales.length === 0 ? (
                         <tr>
                           <td colSpan={3} className="p-8 text-center text-muted-foreground">
-                            Belum ada riwayat penjualan (Log Bersih / Dikosongkan). Bagikan link referral Anda untuk mulai mendapatkan komisi!
+                            Belum ada riwayat penjualan (Log Bersih / Dikosongkan).
                           </td>
                         </tr>
                       ) : (
@@ -1082,19 +1022,15 @@ const Reseller: React.FC = () => {
 
               <div className="space-y-3 text-xs">
                 <div className="space-y-1">
-                  <Label className="text-xs font-semibold">Metode Transfer Payout</Label>
+                  <Label className="text-xs font-semibold">Metode Transfer Payout (Wajib QRIS/DANA/SeaBank)</Label>
                   <select
                     value={payoutMethod}
                     onChange={(e) => setPayoutMethod(e.target.value)}
-                    className="w-full h-9 rounded-xl bg-background border border-border px-3 text-foreground text-xs"
+                    className="w-full h-9 rounded-xl bg-background border border-primary/40 px-3 text-foreground text-xs font-semibold"
                   >
+                    <option value="QRIS">QRIS (Diutamakan / Paling Cepat & Mudah)</option>
                     <option value="DANA">DANA</option>
-                    <option value="GoPay">GoPay</option>
-                    <option value="OVO">OVO</option>
-                    <option value="ShopeePay">ShopeePay</option>
-                    <option value="BCA">Bank BCA</option>
-                    <option value="BRI">Bank BRI</option>
-                    <option value="Mandiri">Bank Mandiri</option>
+                    <option value="SEABANK">SeaBank</option>
                   </select>
                 </div>
 
