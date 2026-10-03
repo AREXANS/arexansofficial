@@ -35,14 +35,35 @@ export const DEFAULT_SCRIPT_PACKAGES: ScriptPackage[] = [
   { id: 'pkg-lt', name: 'Lifetime', days: 999999, price: 350000, is_active: true, description: 'Akses permanen tanpa batas waktu' },
 ];
 
-// Helper to save to Supabase app_settings
-async function syncToSupabase(key: string, value: string) {
+// Helper to save to Supabase app_settings reliably
+async function syncToSupabase(key: string, value: string, description?: string) {
   try {
-    await supabase.from('app_settings').upsert({
+    const { error: upsertError } = await supabase.from('app_settings').upsert({
       key,
       value,
+      description: description || null,
       updated_at: new Date().toISOString(),
     }, { onConflict: 'key' });
+
+    if (upsertError) {
+      console.warn(`[TokoScriptStore] Upsert error for ${key}:`, upsertError);
+      const { data: existing } = await supabase
+        .from('app_settings')
+        .select('id')
+        .eq('key', key)
+        .maybeSingle();
+
+      if (existing?.id) {
+        await supabase
+          .from('app_settings')
+          .update({ value, updated_at: new Date().toISOString() })
+          .eq('key', key);
+      } else {
+        await supabase
+          .from('app_settings')
+          .insert({ key, value, description: description || null });
+      }
+    }
   } catch (err) {
     console.warn(`[TokoScriptStore] Failed to sync ${key} to Supabase:`, err);
   }
@@ -82,8 +103,14 @@ export const getTokoScripts = async (): Promise<TokoScriptProduct[]> => {
 
 export const saveTokoScripts = async (scripts: TokoScriptProduct[]): Promise<void> => {
   const json = JSON.stringify(scripts);
-  localStorage.setItem(STORAGE_SCRIPTS_KEY, json);
-  await syncToSupabase('toko_scripts_catalog', json);
+  try {
+    localStorage.setItem(STORAGE_SCRIPTS_KEY, json);
+    window.dispatchEvent(new CustomEvent('toko_scripts_updated', { detail: scripts }));
+    window.dispatchEvent(new Event('storage'));
+  } catch (e) {
+    console.error(e);
+  }
+  await syncToSupabase('toko_scripts_catalog', json, 'Toko Script Catalog Products');
 };
 
 export const addTokoScript = async (product: Omit<TokoScriptProduct, 'id' | 'createdAt' | 'updatedAt'>): Promise<TokoScriptProduct> => {
@@ -130,50 +157,41 @@ export const getScriptRawId = (prod: TokoScriptProduct): string => {
 };
 
 /**
- * Format resmi output loadstring yang diberikan kepada pembeli:
- * _G.Axstools = "keysystem"
- * loadstring(game:HttpGet("https://domain.com/api/public/raw/id?key=" .. _G.Axstools))()
- */
-export const generateScriptLoaderCode = (
-  key: string,
-  scriptId: string,
-  customDomain?: string
-): string => {
-  const domain = (
-    customDomain ||
-    (typeof window !== 'undefined' ? window.location.origin : 'https://tools.arexans.my.id')
-  ).replace(/\/+$/, '');
-
-  const cleanKey = key || 'keysystem';
-  const cleanId = scriptId || 'main';
-
-  return `_G.Axstools = "${cleanKey}"\nloadstring(game:HttpGet("${domain}/api/public/raw/${cleanId}?key=" .. _G.Axstools))()`;
-};
-
-/**
- * Generator Lua Wrapper Proteksi Key & HWID Otomatis untuk Script Langsung Jalan:
- * - Default 1 HWID slot
- * - Mengecek _G.Axstools dan HWID RbxAnalyticsService
- * - Memanggil API validate-key
- * - Jika melebihi 1 slot HWID, memblokir dan mengarahkan untuk beli penambahan +1 slot HWID permanen
- * - Jika lolos, menjalankan script asli developer
+ * Wrapper proteksi runtime Lua yang dieksekusi di Roblox via loadstring
+ * Mendukung semua executor (Delta, Codex, Hydrogen, Fluxus, Wave, Solara, Arceus, Synapse, dll.)
  */
 export const generateProtectedLuaWrapper = (
-  rawScript: string,
-  scriptTitle: string,
-  scriptId: string,
-  apiOrigin: string
+  script: { title: string; id: string; rawId?: string; luaScript?: string; isMaintenance?: boolean; maintenanceNotice?: string },
+  apiOrigin: string,
+  queryKey: string = ''
 ): string => {
-  const domain = apiOrigin.replace(/\/+$/, '');
-  const title = scriptTitle || 'Script Axstools';
+  if (script.isMaintenance) {
+    const notice = (script.maintenanceNotice || 'Script sedang maintenance. Key Anda dibekukan sementara agar tidak rugi.').replace(/"/g, "'");
+    return `warn("[Axstools] SCRIPT MAINTENANCE: ${notice}")
+pcall(function()
+    game:GetService("StarterGui"):SetCore("SendNotification", {
+        Title = "Axstools Maintenance",
+        Text = "${notice}",
+        Duration = 10
+    })
+end)`;
+  }
+
+  const rawScript = script.luaScript || 'print("[Axstools] No script code defined.")';
+  const title = (script.title || 'Toko Script').replace(/"/g, '\\"');
+  const targetId = (script.rawId && script.rawId.trim()) ? script.rawId.trim() : script.id;
 
   return `-- [[ AXSTOOLS PROTECTED RUNTIME ]]
--- Title: ${title} (ID: ${scriptId})
+-- Title: ${title} (ID: ${targetId})
 -- Key System & HWID Protection Layer (Default 1 HWID Slot)
 
-local KEY = _G.Axstools
-if not KEY or KEY == "" then
-    warn("[Axstools] ERROR: _G.Axstools belum didefinisikan! Harap masukkan key Anda:")
+local KEY = _G.Axstools or _G.AxstoolsKey or _G.Key or _G.LicenseKey
+if (not KEY or KEY == "" or KEY == "keysystem") and "${queryKey}" ~= "" and "${queryKey}" ~= "keysystem" then
+    KEY = "${queryKey}"
+end
+
+if not KEY or KEY == "" or KEY == "keysystem" then
+    warn("[Axstools] ERROR: _G.Axstools belum didefinisikan! Harap pasang key Anda:")
     warn('_G.Axstools = "KEY_ANDA"')
     pcall(function()
         game:GetService("StarterGui"):SetCore("SendNotification", {
@@ -188,8 +206,25 @@ end
 local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
+if not LocalPlayer then
+    pcall(function()
+        LocalPlayer = Players:GetPropertyChangedSignal("LocalPlayer"):Wait() or Players.LocalPlayer
+    end)
+end
 
 local function getHwid()
+    local hwid = nil
+    pcall(function()
+        if type(gethwid) == "function" then
+            hwid = gethwid()
+        elseif type(get_hwid) == "function" then
+            hwid = get_hwid()
+        elseif type(getexecutorhwid) == "function" then
+            hwid = getexecutorhwid()
+        end
+    end)
+    if hwid and tostring(hwid) ~= "" then return tostring(hwid) end
+
     local ok, id = pcall(function() return game:GetService("RbxAnalyticsService"):GetClientId() end)
     if ok and id and tostring(id) ~= "" then return tostring(id) end
     return LocalPlayer and tostring(LocalPlayer.UserId) or "FALLBACK_HWID"
@@ -200,22 +235,44 @@ local USERNAME = LocalPlayer and LocalPlayer.Name or "Unknown"
 
 local function httpRequest(opts)
     local req = (syn and syn.request) or (http and http.request) or (fluxus and fluxus.request) or request or http_request
+    local compatOpts = {
+        Url = opts.Url or opts.url,
+        url = opts.Url or opts.url,
+        Method = opts.Method or opts.method or "GET",
+        method = opts.Method or opts.method or "GET",
+        Headers = opts.Headers or opts.headers or { ["Content-Type"] = "application/json" },
+        headers = opts.Headers or opts.headers or { ["Content-Type"] = "application/json" },
+        Body = opts.Body or opts.body,
+        body = opts.Body or opts.body
+    }
     if req then
-        local ok, res = pcall(req, opts)
-        if ok and res then return res end
+        local ok, res = pcall(req, compatOpts)
+        if ok and res then
+            local rBody = res.Body or res.body or res.data or ""
+            local rStatus = res.StatusCode or res.status_code or res.Status or res.statusCode or 200
+            return { StatusCode = rStatus, Body = tostring(rBody), Success = true }
+        end
     end
-    local ok, body = pcall(function() return game:HttpGet(opts.Url) end)
-    if ok and body then return { StatusCode = 200, Body = body } end
+
+    local getUrl = opts.Url or opts.url
+    if opts.QueryStr and opts.QueryStr ~= "" then
+        getUrl = getUrl .. (string.find(getUrl, "?") and "&" or "?") .. opts.QueryStr
+    end
+    local ok, body = pcall(function() return game:HttpGet(getUrl) end)
+    if ok and body then
+        return { StatusCode = 200, Body = tostring(body), Success = true }
+    end
     return nil
 end
 
-local VALIDATE_URL = "${domain}/api/validate-key"
+local VALIDATE_URL = "${apiOrigin}/api/validate-key"
+local queryParams = "key=" .. HttpService:UrlEncode(tostring(KEY)) .. "&productId=" .. HttpService:UrlEncode("${targetId}") .. "&hwid=" .. HttpService:UrlEncode(tostring(HWID)) .. "&robloxUsername=" .. HttpService:UrlEncode(tostring(USERNAME))
 local payload = HttpService:JSONEncode({
-    key = KEY,
-    productId = "${scriptId}",
-    productTitle = "${title.replace(/"/g, '\\"')}",
-    hwid = HWID,
-    robloxUsername = USERNAME
+    key = tostring(KEY),
+    productId = "${targetId}",
+    productTitle = "${title}",
+    hwid = tostring(HWID),
+    robloxUsername = tostring(USERNAME)
 })
 
 local res = httpRequest({
@@ -224,7 +281,8 @@ local res = httpRequest({
     Headers = {
         ["Content-Type"] = "application/json"
     },
-    Body = payload
+    Body = payload,
+    QueryStr = queryParams
 })
 
 local isValid = false
@@ -232,14 +290,14 @@ local errorMsg = "Gagal menghubungi server verifikasi Axstools."
 local hwidLimitReached = false
 local isFrozen = false
 
-if res and res.Body then
+if res and res.Body and res.Body ~= "" then
     local ok, data = pcall(function() return HttpService:JSONDecode(res.Body) end)
     if ok and type(data) == "table" then
         if data.valid or data.success then
             isValid = true
         else
             errorMsg = data.error or data.message or "Key tidak valid"
-            if data.hwid_limit_reached or (data.error and string.find(string.lower(data.error), "maximum devices")) then
+            if data.hwid_limit_reached or data.hwidLimitReached or (data.error and (string.find(string.lower(data.error), "batas perangkat") or string.find(string.lower(data.error), "maximum devices"))) then
                 hwidLimitReached = true
             end
             if data.frozen then
@@ -253,7 +311,7 @@ if not isValid then
     if hwidLimitReached then
         warn("[Axstools] HWID LIMIT REACHED! Kuota perangkat untuk key ini penuh (Default 1 HWID).")
         warn("[Axstools] Beli penambahan +1 slot HWID permanen di portal Key System:")
-        warn("${domain}/key-system")
+        warn("${apiOrigin}/key-system")
         pcall(function()
             game:GetService("StarterGui"):SetCore("SendNotification", {
                 Title = "Axstools HWID Penuh!",
@@ -295,6 +353,27 @@ end)
 -- [[ SCRIPT LANGSUNG JALAN DARI DEVELOPER ]]
 ${rawScript}
 `;
+};
+
+/**
+ * Format resmi output loadstring yang diberikan kepada pembeli:
+ * _G.Axstools = "keysystem"
+ * loadstring(game:HttpGet("https://domain.com/api/public/raw/id?key=" .. _G.Axstools))()
+ */
+export const generateScriptLoaderCode = (
+  key: string,
+  scriptId: string,
+  customDomain?: string
+): string => {
+  const domain = (
+    customDomain ||
+    (typeof window !== 'undefined' ? window.location.origin : 'https://tools.arexans.my.id')
+  ).replace(/\/+$/, '');
+
+  const cleanKey = key || 'keysystem';
+  const cleanId = scriptId || 'main';
+
+  return `_G.Axstools = "${cleanKey}"\nloadstring(game:HttpGet("${domain}/api/public/raw/${cleanId}?key=" .. _G.Axstools))()`;
 };
 
 // -------------------------------------------------------------

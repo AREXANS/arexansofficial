@@ -78,7 +78,7 @@ import {
   Key,
 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
-import { freezeProductKeys, unfreezeProductKeys } from '@/lib/maintenanceStore';
+import { freezeTokoScriptKeys, unfreezeTokoScriptKeys } from '@/lib/tokoScriptKeyStore';
 import { TokoScriptKeyManagement } from './TokoScriptKeyManagement';
 
 export const TokoScriptAdmin: React.FC = () => {
@@ -96,6 +96,7 @@ export const TokoScriptAdmin: React.FC = () => {
   // Product modal state
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [savingProduct, setSavingProduct] = useState(false);
 
   // Product form fields
   const [formTitle, setFormTitle] = useState('');
@@ -257,20 +258,20 @@ export const TokoScriptAdmin: React.FC = () => {
       });
 
       if (nextState) {
-        const res = await freezeProductKeys('all');
+        const res = await freezeTokoScriptKeys(prod.id);
         toast({
           title: 'Produk Dikunci Maintenance',
           description: `Script "${prod.title}" dikunci. ${res?.count || 0} key pelanggan dibekukan sementara agar tidak rugi.`,
         });
       } else {
-        const res = await unfreezeProductKeys('all');
+        const res = await unfreezeTokoScriptKeys(prod.id);
         toast({
           title: 'Maintenance Selesai',
           description: `Script "${prod.title}" dibuka kembali normal. ${res?.count || 0} key aktif dilanjutkan secara utuh.`,
         });
       }
 
-      loadAllData();
+      await loadAllData();
     } catch (e: any) {
       toast({ title: 'Gagal', description: e.message, variant: 'destructive' });
     }
@@ -280,7 +281,7 @@ export const TokoScriptAdmin: React.FC = () => {
     if (!confirm('Apakah Anda yakin ingin menghapus produk script ini?')) return;
     await deleteTokoScript(id);
     toast({ title: 'Produk Dihapus', description: 'Script berhasil dihapus dari katalog Toko Script.' });
-    loadAllData();
+    await loadAllData();
   };
 
   // Add media URL directly
@@ -354,8 +355,9 @@ export const TokoScriptAdmin: React.FC = () => {
       return;
     }
 
+    setSavingProduct(true);
     try {
-      const cleanRawId = formRawId.trim() ? formRawId.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '-') : undefined;
+      const cleanRawId = formRawId.trim() ? formRawId.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '-') : '';
 
       if (editingId) {
         const existingProd = products.find((p) => p.id === editingId);
@@ -373,16 +375,16 @@ export const TokoScriptAdmin: React.FC = () => {
           maintenanceStartedAt: formIsMaintenance ? (existingProd?.maintenanceStartedAt || new Date().toISOString()) : null,
         });
 
-        // If maintenance status toggled, freeze or unfreeze keys automatically
+        // If maintenance status toggled, freeze or unfreeze keys specifically for this product
         if (existingProd && existingProd.isMaintenance !== formIsMaintenance) {
           if (formIsMaintenance) {
-            const res = await freezeProductKeys('all');
+            const res = await freezeTokoScriptKeys(editingId);
             toast({
               title: 'Script Dikunci Maintenance',
               description: `Script "${formTitle.trim()}" dikunci. ${res?.count || 0} key pelanggan dibekukan sementara agar tidak rugi.`,
             });
           } else {
-            const res = await unfreezeProductKeys('all');
+            const res = await unfreezeTokoScriptKeys(editingId);
             toast({
               title: 'Maintenance Selesai',
               description: `Script "${formTitle.trim()}" dibuka normal. ${res?.count || 0} key dilanjutkan durasinya secara utuh.`,
@@ -408,9 +410,11 @@ export const TokoScriptAdmin: React.FC = () => {
       }
 
       setIsModalOpen(false);
-      loadAllData();
+      await loadAllData();
     } catch (err: any) {
-      toast({ title: 'Gagal Menyimpan', description: err.message, variant: 'destructive' });
+      toast({ title: 'Gagal Menyimpan', description: err.message || 'Terjadi kesalahan saat menyimpan', variant: 'destructive' });
+    } finally {
+      setSavingProduct(false);
     }
   };
 
@@ -1532,10 +1536,12 @@ export const TokoScriptAdmin: React.FC = () => {
               </Button>
               <Button
                 type="button"
+                disabled={savingProduct}
                 onClick={handleSaveProduct}
-                className="flex-1 rounded-xl text-xs font-bold bg-primary hover:bg-primary/90 text-primary-foreground h-10 shadow-md shadow-primary/20"
+                className="flex-1 rounded-xl text-xs font-bold bg-primary hover:bg-primary/90 text-primary-foreground h-10 shadow-md shadow-primary/20 flex items-center justify-center gap-1.5"
               >
-                {editingId ? 'Simpan Perubahan' : 'Buat Produk Script'}
+                {savingProduct && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
+                {savingProduct ? 'Menyimpan...' : (editingId ? 'Simpan Perubahan' : 'Buat Produk Script')}
               </Button>
             </div>
           </div>
