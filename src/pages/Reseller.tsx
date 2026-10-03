@@ -16,10 +16,12 @@ import {
   createPakasirResellerOrder,
   activatePaidResellerAccount,
   clearAllResellerLogs,
+  getTokoScripts,
   RESELLER_REGISTRATION_PRICE,
 } from '@/lib/tokoScriptStore';
 import { supabase } from '@/integrations/supabase/client';
 import GlobalBackground from '@/components/GlobalBackground';
+import { QrisImageUploader } from '@/components/QrisImageUploader';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -53,6 +55,11 @@ import {
   Lock,
   Eraser,
   Percent,
+  Link2,
+  MessageCircle,
+  ExternalLink,
+  Eye,
+  MousePointerClick,
 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 
@@ -68,13 +75,22 @@ const Reseller: React.FC = () => {
   const [loginIdentifier, setLoginIdentifier] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
 
-  // Register form state (Beli Akun via Pakasir - Tanpa Nama Lengkap, Tanpa Email, Tanpa Referral)
+  // Register form state (Beli Akun via Pakasir - Upload QRIS murni tanpa textbox)
   const [regUsername, setRegUsername] = useState('');
   const [regPhone, setRegPhone] = useState('');
   const [regPassword, setRegPassword] = useState('');
   const [regPayoutMethod, setRegPayoutMethod] = useState<'QRIS' | 'DANA' | 'SEABANK'>('QRIS');
   const [regAccountNumber, setRegAccountNumber] = useState('');
   const [regAccountName, setRegAccountName] = useState('');
+  const [regQrisImage, setRegQrisImage] = useState<string>('');
+
+  // Smart Affiliate & Deep Link generator state
+  const [catalogScripts, setCatalogScripts] = useState<any[]>([]);
+  const [selectedScriptForLink, setSelectedScriptForLink] = useState<string>('');
+  const [copiedMainLink, setCopiedMainLink] = useState(false);
+  const [copiedScriptLink, setCopiedScriptLink] = useState(false);
+  const [qrisPreviewModalOpen, setQrisPreviewModalOpen] = useState(false);
+  const [payoutQrisImage, setPayoutQrisImage] = useState<string>('');
 
   // Pakasir Payment Modal State
   const [pakasirModalOpen, setPakasirModalOpen] = useState(false);
@@ -103,6 +119,14 @@ const Reseller: React.FC = () => {
       setCurrentReseller(session);
       loadResellerData(session.id);
     }
+    // Load catalog scripts for deep link generator
+    getTokoScripts().then((scripts) => {
+      const active = (scripts || []).filter((s) => s.isActive);
+      setCatalogScripts(active);
+      if (active.length > 0) {
+        setSelectedScriptForLink(active[0].id);
+      }
+    });
   }, []);
 
   // Cleanup poll interval on unmount
@@ -153,11 +177,29 @@ const Reseller: React.FC = () => {
     }
   };
 
-  // Submit beli akun reseller otomatis Rp 80.000 via Pakasir
+  // Submit beli akun reseller otomatis Rp 80.000 via Pakasir (Upload QRIS Murni)
   const handlePurchaseResellerPakasir = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!regUsername.trim() || !regPhone.trim() || !regPassword.trim() || !regAccountNumber.trim() || !regAccountName.trim()) {
-      toast({ title: 'Data Belum Lengkap', description: 'Mohon lengkapi username, no. whatsapp, password, dan info pembayaran.', variant: 'destructive' });
+    if (!regUsername.trim() || !regPhone.trim() || !regPassword.trim() || !regAccountName.trim()) {
+      toast({ title: 'Data Belum Lengkap', description: 'Mohon lengkapi username, no. whatsapp, password, dan nama pemilik akun.', variant: 'destructive' });
+      return;
+    }
+
+    if (regPayoutMethod === 'QRIS' && !regQrisImage) {
+      toast({
+        title: 'Upload Gambar QRIS Diperlukan',
+        description: 'Mohon upload foto gambar QRIS Anda agar developer bisa scan & mentransfer komisi bagi hasil Anda.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    if (regPayoutMethod !== 'QRIS' && !regAccountNumber.trim()) {
+      toast({
+        title: 'Nomor Rekening Diperlukan',
+        description: `Mohon masukkan nomor akun ${regPayoutMethod} Anda.`,
+        variant: 'destructive',
+      });
       return;
     }
 
@@ -168,8 +210,9 @@ const Reseller: React.FC = () => {
         phone: regPhone.trim(),
         password: regPassword,
         payoutMethod: regPayoutMethod,
-        payoutAccountNumber: regAccountNumber.trim(),
+        payoutAccountNumber: regPayoutMethod === 'QRIS' ? 'GAMBAR_QRIS' : regAccountNumber.trim(),
         payoutAccountName: regAccountName.trim(),
+        payoutQrisUrl: regPayoutMethod === 'QRIS' ? regQrisImage : undefined,
         commissionPct: 20, // default komisi
         commissionScope: 'both', // default scope semua produk
       });
@@ -279,6 +322,7 @@ const Reseller: React.FC = () => {
     setPayoutMethod(currentReseller.payoutMethod || 'QRIS');
     setPayoutNumber(currentReseller.payoutAccountNumber || '');
     setPayoutName(currentReseller.payoutAccountName || currentReseller.username);
+    setPayoutQrisImage(currentReseller.payoutQrisUrl || '');
     setPayoutNotes('Pencairan komisi bagi hasil reseller');
     setPayoutModalOpen(true);
   };
@@ -286,6 +330,25 @@ const Reseller: React.FC = () => {
   // Execute Commission Payout (Resets balance!)
   const handleConfirmPayout = async () => {
     if (!currentReseller) return;
+
+    if (payoutMethod === 'QRIS' && !payoutQrisImage) {
+      toast({
+        title: 'Upload Gambar QRIS Wajib',
+        description: 'Mohon upload gambar QRIS Anda agar developer bisa scan & mentransfer komisi Anda.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    if (payoutMethod !== 'QRIS' && !payoutNumber.trim()) {
+      toast({
+        title: 'Nomor Rekening Wajib',
+        description: `Mohon isi nomor akun ${payoutMethod} Anda.`,
+        variant: 'destructive',
+      });
+      return;
+    }
+
     setPayoutSubmitting(true);
 
     try {
@@ -293,9 +356,10 @@ const Reseller: React.FC = () => {
         resellerId: currentReseller.id,
         amount: payoutAmount,
         payoutMethod,
-        accountNumber: payoutNumber,
+        accountNumber: payoutMethod === 'QRIS' ? 'GAMBAR_QRIS' : payoutNumber,
         accountName: payoutName,
         notes: payoutNotes,
+        qrisImageUrl: payoutMethod === 'QRIS' ? payoutQrisImage : undefined,
       });
 
       if (res.success && res.updatedAccount) {
@@ -519,56 +583,75 @@ const Reseller: React.FC = () => {
                         <span className="text-[10px] text-muted-foreground">Wajib QRIS / DANA / SeaBank</span>
                       </div>
 
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                        <div className="sm:col-span-1">
-                          <Label className="text-[10px] text-muted-foreground block mb-1">Metode Payout *</Label>
+                      <div className="space-y-2">
+                        <div>
+                          <Label className="text-[10px] text-muted-foreground block mb-1">Metode Payout Komisi *</Label>
                           <select
                             value={regPayoutMethod}
                             onChange={(e: any) => setRegPayoutMethod(e.target.value)}
-                            className="w-full h-8 text-xs rounded-lg bg-background border border-primary/40 px-2 text-foreground font-semibold"
+                            className="w-full h-9 text-xs rounded-xl bg-background border border-primary/40 px-3 text-foreground font-semibold"
                           >
-                            <option value="QRIS">QRIS (Diutamakan / Mudah)</option>
-                            <option value="DANA">DANA</option>
-                            <option value="SEABANK">SeaBank</option>
+                            <option value="QRIS">QRIS (Upload Foto QRIS - Paling Mudah)</option>
+                            <option value="DANA">DANA (Nomor Akun)</option>
+                            <option value="SEABANK">SeaBank (Nomor Rekening)</option>
                           </select>
                         </div>
-                        <div className="sm:col-span-2">
-                          <Label className="text-[10px] text-muted-foreground block mb-1">
-                            {regPayoutMethod === 'QRIS'
-                              ? 'Nomor HP QRIS / Link / String QRIS *'
-                              : regPayoutMethod === 'DANA'
-                              ? 'Nomor Akun DANA (08xxxxxxxx) *'
-                              : 'Nomor Rekening SeaBank *'}
-                          </Label>
-                          <Input
-                            value={regAccountNumber}
-                            onChange={(e) => setRegAccountNumber(e.target.value)}
-                            placeholder={
-                              regPayoutMethod === 'QRIS'
-                                ? 'No HP QRIS atau Link/String QRIS'
-                                : regPayoutMethod === 'DANA'
-                                ? '08xxxxxxxxxx'
-                                : 'No Rekening SeaBank'
-                            }
-                            className="h-8 text-xs rounded-lg"
-                            required
-                          />
-                        </div>
-                      </div>
 
-                      <div>
-                        <Label className="text-[10px] text-muted-foreground block mb-1">
-                          {regPayoutMethod === 'QRIS'
-                            ? 'Nama Merchant / Pemilik QRIS *'
-                            : 'Atas Nama Rekening / Pemilik Akun *'}
-                        </Label>
-                        <Input
-                          value={regAccountName}
-                          onChange={(e) => setRegAccountName(e.target.value)}
-                          placeholder="Nama pemilik akun pencairan"
-                          className="h-8 text-xs rounded-lg"
-                          required
-                        />
+                        {regPayoutMethod === 'QRIS' ? (
+                          <div className="pt-1">
+                            <QrisImageUploader
+                              value={regQrisImage}
+                              onChange={setRegQrisImage}
+                              onRemove={() => setRegQrisImage('')}
+                              label="Upload Foto / Gambar QRIS Merchant Anda *"
+                            />
+                            <div className="mt-2.5">
+                              <Label className="text-[10px] text-muted-foreground block mb-1">
+                                Nama Merchant / Pemilik QRIS *
+                              </Label>
+                              <Input
+                                value={regAccountName}
+                                onChange={(e) => setRegAccountName(e.target.value)}
+                                placeholder="Contoh: Toko Reseller Alex / Nama Anda"
+                                className="h-8 text-xs rounded-lg"
+                                required
+                              />
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                            <div>
+                              <Label className="text-[10px] text-muted-foreground block mb-1">
+                                {regPayoutMethod === 'DANA'
+                                  ? 'Nomor Akun DANA (08xxxxxxxx) *'
+                                  : 'Nomor Rekening SeaBank *'}
+                              </Label>
+                              <Input
+                                value={regAccountNumber}
+                                onChange={(e) => setRegAccountNumber(e.target.value)}
+                                placeholder={
+                                  regPayoutMethod === 'DANA'
+                                    ? '08xxxxxxxxxx'
+                                    : 'No Rekening SeaBank'
+                                }
+                                className="h-8 text-xs rounded-lg"
+                                required
+                              />
+                            </div>
+                            <div>
+                              <Label className="text-[10px] text-muted-foreground block mb-1">
+                                Atas Nama Rekening / Pemilik Akun *
+                              </Label>
+                              <Input
+                                value={regAccountName}
+                                onChange={(e) => setRegAccountName(e.target.value)}
+                                placeholder="Nama pemilik akun pencairan"
+                                className="h-8 text-xs rounded-lg"
+                                required
+                              />
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </div>
 
@@ -678,24 +761,218 @@ const Reseller: React.FC = () => {
                       {currentReseller.payoutMethod}
                     </span>
                     {currentReseller.payoutMethod === 'QRIS' && (
-                      <span className="text-[10px] text-emerald-400 font-medium">(Diutamakan)</span>
+                      <span className="text-[10px] text-emerald-400 font-medium">(Upload Foto QRIS)</span>
                     )}
                   </div>
                 </div>
 
                 <div className="p-3 rounded-xl bg-background/60 border border-border/70 space-y-1">
                   <span className="text-[10px] text-muted-foreground block">
-                    {currentReseller.payoutMethod === 'QRIS' ? 'ID / No. HP / Link QRIS:' : 'No. HP / No. Rekening:'}
+                    {currentReseller.payoutMethod === 'QRIS' ? 'Foto Gambar QRIS Reseller:' : 'No. HP / No. Rekening:'}
                   </span>
-                  <div className="text-xs font-bold font-mono text-foreground break-all">
-                    {currentReseller.payoutAccountNumber || '-'}
-                  </div>
+                  {currentReseller.payoutMethod === 'QRIS' ? (
+                    currentReseller.payoutQrisUrl ? (
+                      <div className="flex items-center gap-2">
+                        <img
+                          src={currentReseller.payoutQrisUrl}
+                          alt="QRIS Reseller"
+                          onClick={() => setQrisPreviewModalOpen(true)}
+                          className="w-8 h-8 rounded border border-border object-cover cursor-pointer hover:opacity-80"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setQrisPreviewModalOpen(true)}
+                          className="text-[11px] text-primary hover:underline font-semibold flex items-center gap-1"
+                        >
+                          <Eye className="w-3 h-3" />
+                          Lihat QRIS
+                        </button>
+                      </div>
+                    ) : (
+                      <span className="text-xs text-amber-400 font-medium">Belum ada gambar QRIS</span>
+                    )
+                  ) : (
+                    <div className="text-xs font-bold font-mono text-foreground break-all">
+                      {currentReseller.payoutAccountNumber || '-'}
+                    </div>
+                  )}
                 </div>
 
                 <div className="p-3 rounded-xl bg-background/60 border border-border/70 space-y-1">
                   <span className="text-[10px] text-muted-foreground block">Atas Nama Rekening / Merchant:</span>
                   <div className="text-xs font-bold text-foreground">
                     {currentReseller.payoutAccountName || currentReseller.username}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* PUSAT LINK AFILIASI CERDAS RESELLER (SMART AFFILIATE CENTER) */}
+            <div className="glass-card rounded-2xl p-5 border-primary/40 bg-gradient-to-br from-card/95 via-primary/5 to-card/95 space-y-4 shadow-xl">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-border/60 pb-3">
+                <div className="space-y-0.5">
+                  <div className="flex items-center gap-2">
+                    <div className="w-7 h-7 rounded-lg bg-primary/20 flex items-center justify-center text-primary">
+                      <Share2 className="w-4 h-4" />
+                    </div>
+                    <h3 className="font-bold text-base text-foreground font-display">
+                      Pusat Link Afiliasi & Toko Cerdas Anda
+                    </h3>
+                    <Badge variant="outline" className="text-[10px] border-primary/40 text-primary font-mono">
+                      Auto-Tracking 30 Hari
+                    </Badge>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Bagikan link unik Anda. Pembeli tetap checkout & bayar sendiri di web via QRIS — komisi <strong className="text-emerald-400 font-bold">{currentReseller.commissionPct || 20}%</strong> otomatis masuk ke saldo Anda detik itu juga!
+                  </p>
+                </div>
+              </div>
+
+              {/* 1. Main Website Affiliate Link */}
+              <div className="space-y-2">
+                <Label className="text-xs font-semibold text-foreground flex items-center justify-between">
+                  <span className="flex items-center gap-1.5">
+                    <Link2 className="w-3.5 h-3.5 text-primary" />
+                    Link Toko / Beranda Utama:
+                  </span>
+                  <span className="text-[10px] text-muted-foreground font-mono">?ref={currentReseller.username}</span>
+                </Label>
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                  <Input
+                    readOnly
+                    value={`${window.location.origin}/?ref=${currentReseller.username}`}
+                    className="h-9 text-xs font-mono bg-background/80 text-foreground border-border/80 rounded-xl"
+                  />
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={() => {
+                        const url = `${window.location.origin}/?ref=${currentReseller.username}`;
+                        navigator.clipboard.writeText(url);
+                        setCopiedMainLink(true);
+                        toast({ title: 'Link Tersalin!', description: 'Link afiliasi utama siap dibagikan.' });
+                        setTimeout(() => setCopiedMainLink(false), 2000);
+                      }}
+                      className={`h-9 px-3 text-xs rounded-xl gap-1.5 flex-1 sm:flex-initial transition-all ${
+                        copiedMainLink
+                          ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                          : 'bg-primary hover:bg-primary/90 text-primary-foreground'
+                      }`}
+                    >
+                      {copiedMainLink ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                      {copiedMainLink ? 'Tersalin!' : 'Salin Link'}
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        const url = `${window.location.origin}/?ref=${currentReseller.username}`;
+                        const text = encodeURIComponent(
+                          `Halo! Mau beli script Roblox premium resmi & terpercaya? Beli langsung di sini dengan QRIS otomatis instan: ${url}`
+                        );
+                        window.open(`https://api.whatsapp.com/send?text=${text}`, '_blank');
+                      }}
+                      className="h-9 px-3 text-xs rounded-xl border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/10 gap-1.5 flex-1 sm:flex-initial"
+                      title="Bagikan ke WhatsApp"
+                    >
+                      <MessageCircle className="w-3.5 h-3.5" />
+                      Share WA
+                    </Button>
+                  </div>
+                </div>
+              </div>
+
+              {/* 2. Direct Script Deep Link */}
+              {catalogScripts.length > 0 && (
+                <div className="space-y-2 pt-2 border-t border-border/50">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                    <Label className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                      <ShoppingBag className="w-3.5 h-3.5 text-secondary" />
+                      Link Langsung ke Produk Script Spesifik (Deep Link):
+                    </Label>
+                    <span className="text-[10px] text-muted-foreground">Langsung membuka script pilihan</span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <div className="sm:col-span-1">
+                      <select
+                        value={selectedScriptForLink}
+                        onChange={(e) => setSelectedScriptForLink(e.target.value)}
+                        className="w-full h-9 rounded-xl bg-background border border-border/80 px-2.5 text-foreground text-xs font-semibold"
+                      >
+                        {catalogScripts.map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.title}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="sm:col-span-2 flex items-center gap-2">
+                      <Input
+                        readOnly
+                        value={`${window.location.origin}/?ref=${currentReseller.username}&tab=toko&script=${selectedScriptForLink}`}
+                        className="h-9 text-xs font-mono bg-background/80 text-foreground border-border/80 rounded-xl"
+                      />
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => {
+                          const url = `${window.location.origin}/?ref=${currentReseller.username}&tab=toko&script=${selectedScriptForLink}`;
+                          navigator.clipboard.writeText(url);
+                          setCopiedScriptLink(true);
+                          toast({ title: 'Link Script Tersalin!', description: 'Link produk siap dipromosikan.' });
+                          setTimeout(() => setCopiedScriptLink(false), 2000);
+                        }}
+                        className={`h-9 px-3 text-xs rounded-xl gap-1.5 flex-shrink-0 ${
+                          copiedScriptLink ? 'bg-emerald-600 text-white' : ''
+                        }`}
+                      >
+                        {copiedScriptLink ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                        {copiedScriptLink ? 'Tersalin!' : 'Salin'}
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* 3. Cara Kerja Sistem Afiliasi Otomatis */}
+              <div className="p-3 rounded-xl bg-background/50 border border-border/70 grid grid-cols-1 sm:grid-cols-4 gap-2 text-[11px]">
+                <div className="flex items-start gap-2">
+                  <div className="w-5 h-5 rounded-full bg-primary/20 text-primary flex items-center justify-center font-bold text-[10px] flex-shrink-0 mt-0.5">
+                    1
+                  </div>
+                  <div>
+                    <strong className="text-foreground block">Sebarkan Link</strong>
+                    <span className="text-muted-foreground text-[10px]">Promosikan ke TikTok, WA, atau YouTube</span>
+                  </div>
+                </div>
+                <div className="flex items-start gap-2">
+                  <div className="w-5 h-5 rounded-full bg-primary/20 text-primary flex items-center justify-center font-bold text-[10px] flex-shrink-0 mt-0.5">
+                    2
+                  </div>
+                  <div>
+                    <strong className="text-foreground block">Auto-Tracking</strong>
+                    <span className="text-muted-foreground text-[10px]">Tersimpan di browser buyer selama 30 hari</span>
+                  </div>
+                </div>
+                <div className="flex items-start gap-2">
+                  <div className="w-5 h-5 rounded-full bg-primary/20 text-primary flex items-center justify-center font-bold text-[10px] flex-shrink-0 mt-0.5">
+                    3
+                  </div>
+                  <div>
+                    <strong className="text-foreground block">Pembeli Bayar</strong>
+                    <span className="text-muted-foreground text-[10px]">Buyer scan QRIS otomatis sendiri di web</span>
+                  </div>
+                </div>
+                <div className="flex items-start gap-2">
+                  <div className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold text-[10px] flex-shrink-0 mt-0.5">
+                    4
+                  </div>
+                  <div>
+                    <strong className="text-emerald-400 block">Komisi Masuk!</strong>
+                    <span className="text-muted-foreground text-[10px]">Saldo {currentReseller.commissionPct || 20}% cair realtime</span>
                   </div>
                 </div>
               </div>
@@ -1028,39 +1305,64 @@ const Reseller: React.FC = () => {
                     onChange={(e) => setPayoutMethod(e.target.value)}
                     className="w-full h-9 rounded-xl bg-background border border-primary/40 px-3 text-foreground text-xs font-semibold"
                   >
-                    <option value="QRIS">QRIS (Diutamakan / Paling Cepat & Mudah)</option>
-                    <option value="DANA">DANA</option>
-                    <option value="SEABANK">SeaBank</option>
+                    <option value="QRIS">QRIS (Upload Foto QRIS - Paling Cepat & Mudah)</option>
+                    <option value="DANA">DANA (Nomor Akun)</option>
+                    <option value="SEABANK">SeaBank (Nomor Rekening)</option>
                   </select>
                 </div>
 
-                <div className="grid grid-cols-2 gap-2">
-                  <div className="space-y-1">
-                    <Label className="text-xs font-semibold">No. HP / Rekening</Label>
-                    <Input
-                      value={payoutNumber}
-                      onChange={(e) => setPayoutNumber(e.target.value)}
-                      placeholder="081234567890"
-                      className="h-9 text-xs rounded-xl"
+                {payoutMethod === 'QRIS' ? (
+                  <div className="space-y-2 pt-1">
+                    <QrisImageUploader
+                      value={payoutQrisImage}
+                      onChange={setPayoutQrisImage}
+                      onRemove={() => setPayoutQrisImage('')}
+                      label="Foto / Gambar QRIS Penerima Komisi *"
                     />
+                    <div>
+                      <Label className="text-xs font-semibold">Nama Merchant / Pemilik QRIS *</Label>
+                      <Input
+                        value={payoutName}
+                        onChange={(e) => setPayoutName(e.target.value)}
+                        placeholder="Nama pemilik QRIS"
+                        className="h-9 text-xs rounded-xl mt-1"
+                        required
+                      />
+                    </div>
                   </div>
-                  <div className="space-y-1">
-                    <Label className="text-xs font-semibold">Atas Nama Rekening</Label>
-                    <Input
-                      value={payoutName}
-                      onChange={(e) => setPayoutName(e.target.value)}
-                      placeholder="Nama Penerima"
-                      className="h-9 text-xs rounded-xl"
-                    />
+                ) : (
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-1">
+                      <Label className="text-xs font-semibold">
+                        {payoutMethod === 'DANA' ? 'No. HP DANA *' : 'No. Rekening SeaBank *'}
+                      </Label>
+                      <Input
+                        value={payoutNumber}
+                        onChange={(e) => setPayoutNumber(e.target.value)}
+                        placeholder={payoutMethod === 'DANA' ? '081234567890' : 'No Rekening'}
+                        className="h-9 text-xs rounded-xl"
+                        required
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs font-semibold">Atas Nama Rekening *</Label>
+                      <Input
+                        value={payoutName}
+                        onChange={(e) => setPayoutName(e.target.value)}
+                        placeholder="Nama Penerima"
+                        className="h-9 text-xs rounded-xl"
+                        required
+                      />
+                    </div>
                   </div>
-                </div>
+                )}
 
                 <div className="space-y-1">
                   <Label className="text-xs font-semibold">Pesan / Catatan untuk Developer</Label>
                   <Input
                     value={payoutNotes}
                     onChange={(e) => setPayoutNotes(e.target.value)}
-                    placeholder="Contoh: Tolong transfer ke DANA saya, terima kasih!"
+                    placeholder="Contoh: Mohon scan QRIS saya, terima kasih!"
                     className="h-9 text-xs rounded-xl"
                   />
                 </div>
@@ -1094,6 +1396,34 @@ const Reseller: React.FC = () => {
               </div>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* MODAL ZOOM PREVIEW GAMBAR QRIS RESELLER */}
+      <Dialog open={qrisPreviewModalOpen} onOpenChange={setQrisPreviewModalOpen}>
+        <DialogContent className="max-w-sm p-5 bg-card/95 backdrop-blur-2xl border-border/80 rounded-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-sm font-bold flex items-center gap-2">
+              <QrCode className="w-4 h-4 text-primary" />
+              Gambar QRIS Terdaftar (@{currentReseller?.username})
+            </DialogTitle>
+          </DialogHeader>
+          <div className="p-3 bg-white rounded-xl flex items-center justify-center">
+            {currentReseller?.payoutQrisUrl ? (
+              <img
+                src={currentReseller.payoutQrisUrl}
+                alt="QRIS Reseller"
+                className="max-h-[300px] w-auto object-contain rounded"
+              />
+            ) : (
+              <div className="text-xs text-muted-foreground p-8 text-center">
+                Belum ada gambar QRIS yang di-upload.
+              </div>
+            )}
+          </div>
+          <div className="text-center text-[10px] text-muted-foreground">
+            Gambar QRIS ini digunakan developer saat mentransfer komisi bagi hasil Anda.
+          </div>
         </DialogContent>
       </Dialog>
     </div>

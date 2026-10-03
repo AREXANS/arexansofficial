@@ -8,6 +8,8 @@ import MaintenancePage from '@/components/MaintenancePage';
 import { toast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
 import { isDeveloperTesting, getMaintenanceState } from '@/lib/maintenanceStore';
+import { useReferralTracking } from '@/hooks/useReferralTracking';
+import { recordResellerSale, getStoredReferral } from '@/lib/tokoScriptStore';
 
 interface Ad {
   id: string;
@@ -76,6 +78,7 @@ const getDeviceId = (): string => {
 
 const Index = () => {
   const [searchParams, setSearchParams] = useSearchParams();
+  const { referral } = useReferralTracking();
   const [step, setStep] = useState(1);
   const [selectedPkg, setSelectedPkg] = useState<'NORMAL' | 'VIP' | 'LIFETIME' | null>(null);
   const [formData, setFormData] = useState({ key: '', duration: '' });
@@ -316,6 +319,43 @@ const Index = () => {
         saveState(4, null, newFinalData, days);
         setStatusMsg('');
         
+        // -------------------------------------------------------------
+        // SMART RESELLER COMMISSION AUTO-CREDITING
+        // -------------------------------------------------------------
+        try {
+          const pendingSaleRaw = localStorage.getItem(`pending_reseller_order_${transactionId}`);
+          if (pendingSaleRaw) {
+            const saleParams = JSON.parse(pendingSaleRaw);
+            recordResellerSale(saleParams).then((sale) => {
+              if (sale) {
+                console.log('[Reseller] Commission credited for Toko Script:', sale);
+              }
+            });
+            localStorage.removeItem(`pending_reseller_order_${transactionId}`);
+          } else {
+            const storedRef = getStoredReferral();
+            if (storedRef?.code) {
+              recordResellerSale({
+                resellerCode: storedRef.code,
+                productSource: 'arexans_tools',
+                productId: 'arexans_tools_' + (selectedPkg || 'NORMAL').toLowerCase(),
+                productTitle: `Arexans Tools (${selectedPkg || 'NORMAL'})`,
+                packageName: `${days} Hari`,
+                packageDays: days,
+                salePrice: paymentData?.totalAmount || 0,
+                buyerKey: formData.key,
+                transactionId: transactionId,
+              }).then((sale) => {
+                if (sale) {
+                  console.log('[Reseller] Commission credited for Arexans Tools:', sale);
+                }
+              });
+            }
+          }
+        } catch (rErr) {
+          console.warn('[Reseller] Auto-credit error:', rErr);
+        }
+
         toast({ 
           title: "Pembayaran Berhasil!", 
           description: "Terima kasih atas pembelian Anda." 
@@ -534,6 +574,7 @@ const Index = () => {
       ads={ads}
       packages={packages}
       defaultTab={tabParam === 'toko' ? 'toko' : 'tools'}
+      resellerCode={referral?.code}
       onTokoScriptOrderQris={handleTokoScriptQris}
     />
   );
@@ -551,6 +592,7 @@ const Index = () => {
         formatRupiah={formatRupiah}
         parseDuration={parseDuration}
         prices={PRICES}
+        resellerCode={referral?.code}
       />
       {pendingPayment && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">

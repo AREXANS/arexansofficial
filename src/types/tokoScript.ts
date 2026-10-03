@@ -87,6 +87,7 @@ export interface CommissionWithdrawal {
   accountNumber: string;
   accountName: string;
   notes?: string;
+  qrisImageUrl?: string;
   status: 'pending' | 'completed' | 'rejected';
   requestedAt: string;
   completedAt?: string;

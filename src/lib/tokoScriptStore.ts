@@ -758,10 +758,59 @@ export const logoutReseller = (): void => {
   setCurrentResellerSession(null);
 };
 
+export const REFERRAL_STORAGE_KEY = 'arexans_reseller_ref';
+export const REFERRAL_EXPIRY_DAYS = 30;
+
+export interface StoredReferral {
+  code: string;
+  username: string;
+  name: string;
+  timestamp: number;
+}
+
+export const getStoredReferral = (): StoredReferral | null => {
+  try {
+    const raw = localStorage.getItem(REFERRAL_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed: StoredReferral = JSON.parse(raw);
+    const maxAgeMs = REFERRAL_EXPIRY_DAYS * 24 * 60 * 60 * 1000;
+    if (Date.now() - parsed.timestamp > maxAgeMs) {
+      localStorage.removeItem(REFERRAL_STORAGE_KEY);
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+};
+
+export const setStoredReferral = (code: string, username: string, name?: string): void => {
+  try {
+    const data: StoredReferral = {
+      code: code.trim().toLowerCase(),
+      username: username.trim().toLowerCase(),
+      name: name || username,
+      timestamp: Date.now(),
+    };
+    localStorage.setItem(REFERRAL_STORAGE_KEY, JSON.stringify(data));
+  } catch (e) {
+    console.warn('Failed to save stored referral:', e);
+  }
+};
+
+export const clearStoredReferral = (): void => {
+  localStorage.removeItem(REFERRAL_STORAGE_KEY);
+};
+
 export const findResellerByCode = async (code: string): Promise<ResellerAccount | null> => {
   if (!code) return null;
+  const clean = code.trim().toLowerCase();
   const accounts = await getResellerAccounts();
-  return accounts.find(a => a.referralCode.toUpperCase() === code.trim().toUpperCase() && a.isActive) || null;
+  return accounts.find(a => 
+    (a.username.toLowerCase() === clean || 
+     (a.referralCode && a.referralCode.toLowerCase() === clean)) && 
+    a.isActive
+  ) || null;
 };
 
 // -------------------------------------------------------------
@@ -824,6 +873,15 @@ export const recordResellerSale = async (params: {
   const reseller = await findResellerByCode(params.resellerCode);
   if (!reseller) return null;
 
+  // Prevent duplicate commission record for the same transactionId
+  if (params.transactionId) {
+    const existingSales = await getResellerSales();
+    if (existingSales.some(s => s.transactionId === params.transactionId)) {
+      console.log(`[ResellerSale] Sale for tx ${params.transactionId} already recorded. Skipping.`);
+      return null;
+    }
+  }
+
   // Cek apakah produk sesuai dengan setting produk diskon/komisi reseller
   const scope = reseller.commissionScope || 'both';
   if (scope !== 'both' && scope !== params.productSource) {
@@ -838,7 +896,8 @@ export const recordResellerSale = async (params: {
   const newSale: ResellerSale = {
     id: 'sale-' + Math.random().toString(36).slice(2, 9),
     resellerId: reseller.id,
-    resellerCode: reseller.referralCode,
+    resellerCode: reseller.username || reseller.referralCode,
+    resellerUsername: reseller.username,
     productId: params.productId,
     productTitle: params.productTitle,
     packageName: params.packageName,
@@ -907,7 +966,7 @@ export const getCommissionWithdrawals = async (resellerId?: string): Promise<Com
   }
 
   if (resellerId) {
-    return localData.filter(w => w.resellerId === resellerId);
+    return localData.filter(s => s.resellerId === resellerId);
   }
   return localData;
 };
@@ -929,6 +988,7 @@ export const requestCommissionPayout = async (params: {
   accountNumber: string;
   accountName: string;
   notes?: string;
+  qrisImageUrl?: string;
 }): Promise<{ success: boolean; message: string; withdrawal?: CommissionWithdrawal; updatedAccount?: ResellerAccount }> => {
   const accounts = await getResellerAccounts();
   const accIdx = accounts.findIndex(a => a.id === params.resellerId);
@@ -947,16 +1007,20 @@ export const requestCommissionPayout = async (params: {
     return { success: false, message: `Nominal penarikan melebihi saldo komisi aktif (Maksimal: Rp ${account.activeCommission.toLocaleString('id-ID')}).` };
   }
 
+  const qrisUrlFinal = params.qrisImageUrl || account.payoutQrisUrl;
+
   const newWithdrawal: CommissionWithdrawal = {
     id: 'wd-' + Math.random().toString(36).slice(2, 9),
     resellerId: account.id,
-    resellerName: account.name,
-    resellerCode: account.referralCode,
+    resellerName: account.name || account.username,
+    resellerUsername: account.username,
+    resellerCode: account.username || account.referralCode,
     amount: withdrawAmount,
     payoutMethod: params.payoutMethod || account.payoutMethod,
     accountNumber: params.accountNumber || account.payoutAccountNumber,
     accountName: params.accountName || account.payoutAccountName,
     notes: params.notes || 'Penarikan komisi bagi hasil oleh reseller',
+    qrisImageUrl: qrisUrlFinal,
     status: 'completed', // Berhasil & direset ulang
     requestedAt: new Date().toISOString(),
     completedAt: new Date().toISOString(),
@@ -965,6 +1029,9 @@ export const requestCommissionPayout = async (params: {
   // 1. Reset saldo komisi aktif!
   account.activeCommission = Math.max(0, account.activeCommission - withdrawAmount);
   account.totalWithdrawnCommission += withdrawAmount;
+  if (params.qrisImageUrl) {
+    account.payoutQrisUrl = params.qrisImageUrl;
+  }
   account.updatedAt = new Date().toISOString();
 
   await saveResellerAccounts(accounts);
@@ -979,7 +1046,7 @@ export const requestCommissionPayout = async (params: {
 
   return {
     success: true,
-    message: `Pengambilan komisi sebesar Rp ${withdrawAmount.toLocaleString('id-ID')} berhasil! Jumlah komisi Anda telah direset ulang ke Rp ${account.activeCommission.toLocaleString('id-ID')}. Developer akan mentransfer ke ${newWithdrawal.payoutMethod} (${newWithdrawal.accountNumber}).`,
+    message: `Pengambilan komisi sebesar Rp ${withdrawAmount.toLocaleString('id-ID')} berhasil! Jumlah komisi Anda telah direset ulang ke Rp ${account.activeCommission.toLocaleString('id-ID')}. Developer akan mentransfer ke ${newWithdrawal.payoutMethod}${newWithdrawal.payoutMethod === 'QRIS' ? ' via Scan QRIS' : ` (${newWithdrawal.accountNumber})`}.`,
     withdrawal: newWithdrawal,
     updatedAccount: account,
   };

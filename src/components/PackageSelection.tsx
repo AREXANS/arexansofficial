@@ -46,6 +46,7 @@ interface PackageSelectionProps {
   ads: Ad[];
   packages?: Package[];
   defaultTab?: 'tools' | 'toko';
+  resellerCode?: string | null;
   onTokoScriptOrderQris?: (data: {
     transactionId: string;
     qr_string: string;
@@ -107,6 +108,7 @@ const PackageSelection: FC<PackageSelectionProps> = ({
   ads,
   packages,
   defaultTab,
+  resellerCode,
   onTokoScriptOrderQris,
 }) => {
   const navigate = useNavigate();
@@ -302,6 +304,7 @@ const PackageSelection: FC<PackageSelectionProps> = ({
         {activeMainTab === 'toko' ? (
           <div className="mb-8">
             <TokoScriptCatalog
+              resellerCode={resellerCode}
               onOpenQris={(data) => {
                 if (onTokoScriptOrderQris) {
                   onTokoScriptOrderQris(data);

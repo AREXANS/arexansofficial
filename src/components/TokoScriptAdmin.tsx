@@ -76,6 +76,8 @@ import {
   Copy,
   ExternalLink,
   Key,
+  Eye,
+  QrCode,
 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { freezeTokoScriptKeys, unfreezeTokoScriptKeys } from '@/lib/tokoScriptKeyStore';
@@ -83,6 +85,7 @@ import { TokoScriptKeyManagement } from './TokoScriptKeyManagement';
 
 export const TokoScriptAdmin: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'products' | 'keysystem' | 'resellers' | 'withdrawals'>('products');
+  const [viewQrisModalImage, setViewQrisModalImage] = useState<string | null>(null);
   const [products, setProducts] = useState<TokoScriptProduct[]>([]);
   const [resellers, setResellers] = useState<ResellerAccount[]>([]);
   const [withdrawals, setWithdrawals] = useState<CommissionWithdrawal[]>([]);
@@ -1000,9 +1003,28 @@ export const TokoScriptAdmin: React.FC = () => {
                             </span>
                             <span>{r.phone}</span>
                           </div>
-                          <div className="text-[11px] text-muted-foreground font-mono">
-                            {r.payoutAccountNumber} ({r.payoutAccountName})
-                          </div>
+                          {r.payoutMethod === 'QRIS' && (r.payoutQrisUrl || r.payoutAccountNumber?.startsWith('data:image')) ? (
+                            <div className="flex items-center gap-2 mt-1">
+                              <img
+                                src={r.payoutQrisUrl || r.payoutAccountNumber}
+                                alt="QRIS"
+                                onClick={() => setViewQrisModalImage(r.payoutQrisUrl || r.payoutAccountNumber)}
+                                className="w-8 h-8 rounded border border-border object-cover cursor-pointer hover:opacity-80"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => setViewQrisModalImage(r.payoutQrisUrl || r.payoutAccountNumber)}
+                                className="text-[11px] text-primary hover:underline font-semibold flex items-center gap-1"
+                              >
+                                <Eye className="w-3 h-3" />
+                                Scan QRIS ({r.payoutAccountName})
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="text-[11px] text-muted-foreground font-mono">
+                              {r.payoutAccountNumber} ({r.payoutAccountName})
+                            </div>
+                          )}
                         </td>
                         <td className="p-3 text-right">
                           <div className="font-bold font-mono">{formatRupiah(r.totalSalesAmount)}</div>
@@ -1119,7 +1141,19 @@ export const TokoScriptAdmin: React.FC = () => {
                           <div className="text-[10px] text-primary font-mono">{w.resellerCode}</div>
                         </td>
                         <td className="p-3">
-                          <span className="font-semibold">{w.payoutMethod}</span>: {w.accountNumber} ({w.accountName})
+                          <span className="font-semibold">{w.payoutMethod}</span>:{' '}
+                          {w.payoutMethod === 'QRIS' && (w.qrisImageUrl || w.accountNumber?.startsWith('data:image')) ? (
+                            <button
+                              type="button"
+                              onClick={() => setViewQrisModalImage(w.qrisImageUrl || w.accountNumber)}
+                              className="text-primary hover:underline font-semibold inline-flex items-center gap-1 ml-1"
+                            >
+                              <Eye className="w-3 h-3" />
+                              Lihat Foto QRIS ({w.accountName})
+                            </button>
+                          ) : (
+                            `${w.accountNumber} (${w.accountName})`
+                          )}
                         </td>
                         <td className="p-3 text-right font-mono font-bold text-emerald-400">
                           {formatRupiah(w.amount)}
@@ -1798,6 +1832,39 @@ export const TokoScriptAdmin: React.FC = () => {
               </Button>
             </div>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* DIALOG SCAN / LIHAT GAMBAR QRIS RESELLER */}
+      <Dialog open={!!viewQrisModalImage} onOpenChange={(open) => !open && setViewQrisModalImage(null)}>
+        <DialogContent className="max-w-sm p-5 bg-card/95 backdrop-blur-2xl border-border/80 rounded-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-sm font-bold flex items-center gap-2">
+              <QrCode className="w-4 h-4 text-primary" />
+              Scan QRIS Reseller untuk Transfer Komisi
+            </DialogTitle>
+          </DialogHeader>
+          <div className="p-3 bg-white rounded-xl flex items-center justify-center shadow-inner">
+            {viewQrisModalImage && (
+              <img
+                src={viewQrisModalImage}
+                alt="QRIS Reseller"
+                className="max-h-[320px] w-auto object-contain rounded"
+              />
+            )}
+          </div>
+          <div className="text-center text-[11px] text-muted-foreground">
+            Buka aplikasi BCA / DANA / GoPay / Bank Anda dan scan kode QRIS di atas untuk mencairkan komisi reseller.
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => setViewQrisModalImage(null)}
+            className="w-full text-xs h-9 rounded-xl mt-2"
+          >
+            Tutup
+          </Button>
         </DialogContent>
       </Dialog>
     </div>
