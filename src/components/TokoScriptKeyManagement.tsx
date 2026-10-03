@@ -18,6 +18,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
+import { Switch } from '@/components/ui/switch';
 import {
   Dialog,
   DialogContent,
@@ -112,11 +113,18 @@ export const TokoScriptKeyManagement: React.FC<TokoScriptKeyManagementProps> = (
     };
   }, []);
 
+  // Helper safe date parser
+  const parseDate = (d?: string | null) => {
+    if (!d) return new Date();
+    const parsed = new Date(d);
+    return isNaN(parsed.getTime()) ? new Date() : parsed;
+  };
+
   // Stats calculation
   const now = new Date();
-  const activeKeys = keys.filter(k => !k.frozenUntil && (k.isLifetime || new Date(k.expired) >= now));
+  const activeKeys = keys.filter(k => !k.frozenUntil && (k.isLifetime || parseDate(k.expired) >= now));
   const frozenKeys = keys.filter(k => !!k.frozenUntil);
-  const expiredKeys = keys.filter(k => !k.frozenUntil && !k.isLifetime && new Date(k.expired) < now);
+  const expiredKeys = keys.filter(k => !k.frozenUntil && !k.isLifetime && parseDate(k.expired) < now);
 
   // Filtered keys
   const filteredKeys = keys.filter(k => {
@@ -129,11 +137,11 @@ export const TokoScriptKeyManagement: React.FC<TokoScriptKeyManagementProps> = (
 
     // Status filter
     if (statusFilter === 'active') {
-      if (k.frozenUntil || (!k.isLifetime && new Date(k.expired) < now)) return false;
+      if (k.frozenUntil || (!k.isLifetime && parseDate(k.expired) < now)) return false;
     } else if (statusFilter === 'frozen') {
       if (!k.frozenUntil) return false;
     } else if (statusFilter === 'expired') {
-      if (k.frozenUntil || k.isLifetime || new Date(k.expired) >= now) return false;
+      if (k.frozenUntil || k.isLifetime || parseDate(k.expired) >= now) return false;
     }
 
     // Search query
@@ -309,7 +317,11 @@ export const TokoScriptKeyManagement: React.FC<TokoScriptKeyManagementProps> = (
 
   const openEditModal = (keyItem: TokoScriptKey) => {
     setEditingKey(keyItem);
-    setEditExpiryDate(new Date(keyItem.expired).toISOString().slice(0, 16));
+    try {
+      setEditExpiryDate(parseDate(keyItem.expired).toISOString().slice(0, 16));
+    } catch {
+      setEditExpiryDate(new Date().toISOString().slice(0, 16));
+    }
     setEditMaxHwid(keyItem.maxHwid || 1);
     setEditCustomerNote(keyItem.customerName || '');
     setIsEditModalOpen(true);
@@ -517,13 +529,14 @@ export const TokoScriptKeyManagement: React.FC<TokoScriptKeyManagementProps> = (
               </thead>
               <tbody className="divide-y divide-border/60">
                 {filteredKeys.map((k) => {
-                  const isExp = !k.isLifetime && new Date(k.expired) < now;
+                  const expDate = parseDate(k.expired);
+                  const isExp = !k.isLifetime && expDate < now;
                   const isFrozen = !!k.frozenUntil;
                   const daysLeft = k.isLifetime
                     ? 'Permanen'
                     : isExp
                     ? 'Expired'
-                    : Math.max(0, Math.ceil((new Date(k.expired).getTime() - now.getTime()) / (1000 * 60 * 60 * 24))) + ' Hari';
+                    : Math.max(0, Math.ceil((expDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))) + ' Hari';
 
                   return (
                     <tr key={k.id} className="hover:bg-muted/20 transition-colors">
@@ -576,7 +589,7 @@ export const TokoScriptKeyManagement: React.FC<TokoScriptKeyManagementProps> = (
                             </Badge>
                           )}
                           <span className="text-[11px] text-muted-foreground block font-mono">
-                            {k.isLifetime ? 'Akses Permanen' : new Date(k.expired).toLocaleDateString('id-ID')}
+                            {k.isLifetime ? 'Akses Permanen' : parseDate(k.expired).toLocaleDateString('id-ID')}
                           </span>
                         </div>
                       </td>
@@ -970,7 +983,7 @@ export const TokoScriptKeyManagement: React.FC<TokoScriptKeyManagementProps> = (
                         <div className="flex items-center justify-between">
                           <span className="font-bold text-foreground">Roblox: {u.username}</span>
                           <span className="text-[10px] text-muted-foreground">
-                            {new Date(u.registeredAt).toLocaleString('id-ID')}
+                            {parseDate(u.registeredAt).toLocaleString('id-ID')}
                           </span>
                         </div>
                         <div className="text-[10px] font-mono text-muted-foreground break-all">

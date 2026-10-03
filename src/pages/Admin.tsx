@@ -32,6 +32,7 @@ import { useDeviceDetection } from '@/hooks/useDeviceDetection';
 import { PaymentGatewaySettings } from '@/components/PaymentGatewaySettings';
 import DeveloperAccessLogs from '@/components/DeveloperAccessLogs';
 import { TokoScriptAdmin } from '@/components/TokoScriptAdmin';
+import { TokoScriptKeyManagement } from '@/components/TokoScriptKeyManagement';
 import {
   getMaintenanceState,
   saveMaintenanceState,
@@ -184,7 +185,7 @@ const Admin = () => {
 
   // XCoins users state
   const [xcoinsUsers, setXcoinsUsers] = useState<{id: string; phone: string; display_name: string | null; balance: number; is_active: boolean; created_at: string}[]>([]);
-  const [keysSubTab, setKeysSubTab] = useState<'keysystem' | 'xcoins'>('keysystem');
+  const [keysSubTab, setKeysSubTab] = useState<'keysystem' | 'toko_scripts' | 'xcoins'>('keysystem');
   const [xcoinsSearch, setXcoinsSearch] = useState('');
   const [editingXcoinsUser, setEditingXcoinsUser] = useState<{id: string; phone: string; display_name: string | null; balance: number; is_active: boolean} | null>(null);
   const [adjustAmount, setAdjustAmount] = useState<string>('');
@@ -253,7 +254,7 @@ const Admin = () => {
     const nextState: MaintenanceState = {
       ...maintenanceState,
       arexansToolsMaintenance: checked,
-      globalMaintenance: checked && Boolean(maintenanceState.tokoScriptsMaintenance),
+      globalMaintenance: !checked ? false : maintenanceState.globalMaintenance,
     };
     setMaintenanceState(nextState);
     setMaintenanceLoading(true);
@@ -265,13 +266,13 @@ const Admin = () => {
         const res = await freezeProductKeys('arexans_tools');
         toast({
           title: '🔴 Arexans Tools Maintenance: AKTIF',
-          description: `Pembelian Arexans Tools dikunci & ${res?.count || 0} key dibekukan sementara.`,
+          description: `Pembelian Arexans Tools dikunci & ${res?.count || 0} key dibekukan sementara (Anti-Rugi).`,
         });
       } else {
         const res = await unfreezeProductKeys('arexans_tools');
         toast({
           title: '🟢 Arexans Tools Normal: BUKA',
-          description: `Pembelian Arexans Tools dibuka kembali & ${res?.count || 0} key dilanjutkan.`,
+          description: `Pembelian Arexans Tools dibuka kembali & ${res?.count || 0} key dilanjutkan utuh.`,
         });
       }
 
@@ -288,7 +289,7 @@ const Admin = () => {
     const nextState: MaintenanceState = {
       ...maintenanceState,
       tokoScriptsMaintenance: checked,
-      globalMaintenance: checked && Boolean(maintenanceState.arexansToolsMaintenance),
+      globalMaintenance: !checked ? false : maintenanceState.globalMaintenance,
     };
     setMaintenanceState(nextState);
     setMaintenanceLoading(true);
@@ -306,7 +307,7 @@ const Admin = () => {
         const res = await unfreezeProductKeys('toko_script');
         toast({
           title: '🟢 Toko Script Normal: BUKA',
-          description: `Katalog Toko Script dibuka kembali & ${res?.count || 0} key dilanjutkan.`,
+          description: `Katalog Toko Script dibuka kembali & ${res?.count || 0} key dilanjutkan utuh.`,
         });
       }
 
@@ -1378,7 +1379,16 @@ const Admin = () => {
                   className="gap-1.5"
                 >
                   <Key className="w-4 h-4" />
-                  Key System
+                  Key Arexans Tools
+                </Button>
+                <Button
+                  variant={keysSubTab === 'toko_scripts' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setKeysSubTab('toko_scripts')}
+                  className={`gap-1.5 ${keysSubTab === 'toko_scripts' ? 'bg-primary text-primary-foreground font-semibold' : 'text-primary border-primary/40'}`}
+                >
+                  <ShoppingBag className="w-4 h-4" />
+                  Key Toko Script (Per-Produk)
                 </Button>
                 <Button
                   variant={keysSubTab === 'xcoins' ? 'default' : 'outline'}
@@ -1392,6 +1402,8 @@ const Admin = () => {
               </div>
 
               {keysSubTab === 'keysystem' && <KeyManagement />}
+
+              {keysSubTab === 'toko_scripts' && <TokoScriptKeyManagement />}
 
               {keysSubTab === 'xcoins' && (
                 <Card className="glass-card">

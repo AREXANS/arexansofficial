@@ -51,21 +51,31 @@ export const setDeveloperTestingBypass = (enabled: boolean): void => {
  */
 const safeSaveSetting = async (key: string, value: string, desc?: string) => {
   try {
-    const { data: existing } = await supabase
+    const { error: upsertError } = await supabase
       .from('app_settings')
-      .select('id')
-      .eq('key', key)
-      .maybeSingle();
+      .upsert(
+        { key, value, description: desc || null, updated_at: new Date().toISOString() },
+        { onConflict: 'key' }
+      );
 
-    if (existing?.id) {
-      await supabase
+    if (upsertError) {
+      console.warn(`[MaintenanceStore] Upsert error for ${key}:`, upsertError);
+      const { data: existing } = await supabase
         .from('app_settings')
-        .update({ value, updated_at: new Date().toISOString() })
-        .eq('key', key);
-    } else {
-      await supabase
-        .from('app_settings')
-        .insert({ key, value, description: desc || null });
+        .select('id')
+        .eq('key', key)
+        .maybeSingle();
+
+      if (existing?.id) {
+        await supabase
+          .from('app_settings')
+          .update({ value, updated_at: new Date().toISOString() })
+          .eq('key', key);
+      } else {
+        await supabase
+          .from('app_settings')
+          .insert({ key, value, description: desc || null });
+      }
     }
   } catch (err) {
     console.warn(`[MaintenanceStore] Error persisting setting ${key}:`, err);
@@ -77,20 +87,36 @@ const safeSaveSetting = async (key: string, value: string, desc?: string) => {
  */
 export const getMaintenanceState = async (): Promise<MaintenanceState> => {
   let localState = DEFAULT_MAINTENANCE_STATE;
+  let localUpdatedAt = 0;
   try {
     const raw = localStorage.getItem(STORAGE_MAINTENANCE_KEY);
-    if (raw) localState = { ...DEFAULT_MAINTENANCE_STATE, ...JSON.parse(raw) };
+    if (raw) {
+      const parsedLocal = JSON.parse(raw);
+      localState = { ...DEFAULT_MAINTENANCE_STATE, ...parsedLocal };
+      if (parsedLocal.updatedAt) {
+        localUpdatedAt = new Date(parsedLocal.updatedAt).getTime();
+      }
+    }
   } catch {}
 
   try {
     const { data } = await supabase
       .from('app_settings')
-      .select('value')
+      .select('value, updated_at')
       .eq('key', 'product_maintenance_state')
       .maybeSingle();
 
     if (data?.value) {
       const parsed = JSON.parse(data.value);
+      const remoteUpdatedAt = data.updated_at
+        ? new Date(data.updated_at).getTime()
+        : (parsed.updatedAt ? new Date(parsed.updatedAt).getTime() : 0);
+
+      // If local state was modified recently (within 15s) or has newer timestamp, keep local state
+      if (localUpdatedAt > 0 && (Date.now() - localUpdatedAt < 15000 || localUpdatedAt > remoteUpdatedAt)) {
+        return localState;
+      }
+
       const merged = { ...DEFAULT_MAINTENANCE_STATE, ...parsed };
       localStorage.setItem(STORAGE_MAINTENANCE_KEY, JSON.stringify(merged));
       return merged;
@@ -117,8 +143,7 @@ export const saveMaintenanceState = async (state: MaintenanceState): Promise<voi
   await safeSaveSetting('product_maintenance_state', json, 'Product maintenance control state');
 
   // Sync maintenance_mode: true ONLY if global maintenance is ON (so partial tools maintenance does not block entire site)
-  const isToolsUnderMaintenance = Boolean(state.globalMaintenance || state.arexansToolsMaintenance);
-  await safeSaveSetting('maintenance_mode', isToolsUnderMaintenance ? 'true' : 'false', 'Global maintenance flag');
+  await safeSaveSetting('maintenance_mode', state.globalMaintenance ? 'true' : 'false', 'Global maintenance flag');
 };
 
 /**
