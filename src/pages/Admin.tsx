@@ -252,7 +252,7 @@ const Admin = () => {
       const nextState: MaintenanceState = {
         ...maintenanceState,
         arexansToolsMaintenance: checked,
-        globalMaintenance: checked && maintenanceState.tokoScriptsMaintenance,
+        globalMaintenance: checked ? Boolean(maintenanceState.tokoScriptsMaintenance) : false,
       };
       await saveMaintenanceState(nextState);
       setMaintenanceState(nextState);
@@ -284,7 +284,7 @@ const Admin = () => {
       const nextState: MaintenanceState = {
         ...maintenanceState,
         tokoScriptsMaintenance: checked,
-        globalMaintenance: checked && maintenanceState.arexansToolsMaintenance,
+        globalMaintenance: checked ? Boolean(maintenanceState.arexansToolsMaintenance) : false,
       };
       await saveMaintenanceState(nextState);
       setMaintenanceState(nextState);
@@ -1136,7 +1136,7 @@ const Admin = () => {
                           <Switch
                             checked={maintenanceState.arexansToolsMaintenance}
                             onCheckedChange={handleToggleArexansToolsMaintenance}
-                            disabled={maintenanceLoading || maintenanceState.globalMaintenance}
+                            disabled={maintenanceLoading}
                           />
                         </div>
 
@@ -1153,7 +1153,7 @@ const Admin = () => {
                           <Switch
                             checked={maintenanceState.tokoScriptsMaintenance}
                             onCheckedChange={handleToggleTokoScriptsMaintenance}
-                            disabled={maintenanceLoading || maintenanceState.globalMaintenance}
+                            disabled={maintenanceLoading}
                           />
                         </div>
                       </div>

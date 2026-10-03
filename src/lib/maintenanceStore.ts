@@ -90,10 +90,11 @@ export const saveMaintenanceState = async (state: MaintenanceState): Promise<voi
       updated_at: new Date().toISOString(),
     });
 
-    // Also sync the legacy maintenance_mode if globalMaintenance is changed
+    // Sync maintenance_mode: true if global OR arexans tools is in maintenance
+    const isToolsUnderMaintenance = Boolean(state.globalMaintenance || state.arexansToolsMaintenance);
     await supabase.from('app_settings').upsert({
       key: 'maintenance_mode',
-      value: state.globalMaintenance ? 'true' : 'false',
+      value: isToolsUnderMaintenance ? 'true' : 'false',
       updated_at: new Date().toISOString(),
     });
   } catch (err) {
@@ -137,8 +138,8 @@ export const freezeProductKeys = async (
       if (isPermanent) return keyItem;
 
       if (scope === 'arexans_tools') {
-        // Arexans Tools keys typically have roles NORMAL, VIP
-        if (role !== 'normal' && role !== 'vip') return keyItem;
+        // Arexans Tools keys have roles normal, vip, or lifetime
+        if (role !== 'normal' && role !== 'vip' && role !== 'lifetime') return keyItem;
       }
 
       // If already frozen, keep current state
@@ -214,7 +215,7 @@ export const unfreezeProductKeys = async (
       // Filter by scope if needed
       const role = (keyItem.role || '').toLowerCase();
       if (scope === 'arexans_tools') {
-        if (role !== 'normal' && role !== 'vip') return keyItem;
+        if (role !== 'normal' && role !== 'vip' && role !== 'lifetime') return keyItem;
       }
 
       // Only unfreeze keys that are currently frozen
