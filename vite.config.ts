@@ -19,9 +19,9 @@ function publicRawScriptPlugin() {
           if (isRoblox) {
             try {
               const supabaseUrl = 'https://caecqqzbikmwroevvyrd.supabase.co';
-              const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNhZWNxcXpiaWttd3JvZXZ2eXJkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ0Mjk5MzQsImV4cCI6MjEwMDAwNTkzNH0.B0lrXEa8TUc82yW6rGb024TUTyqYI3gMTuE2QU2XDQc';
+              const supabaseKey = 'sb_publishable_CnZ2j0kBnLgok3J8Tu9WAA_kR31dqWL';
               const fwd = await fetch(`${supabaseUrl}/functions/v1/get-loader?name=keysystem`, {
-                headers: { 'apikey': supabaseKey, 'Authorization': `Bearer ${supabaseKey}` }
+                headers: { 'apikey': supabaseKey }
               });
               const text = await fwd.text();
               res.setHeader('Content-Type', 'text/plain; charset=utf-8');
@@ -69,15 +69,15 @@ function publicRawScriptPlugin() {
               }
 
               const supabaseUrl = 'https://caecqqzbikmwroevvyrd.supabase.co';
-              const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNhZWNxcXpiaWttd3JvZXZ2eXJkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ0Mjk5MzQsImV4cCI6MjEwMDAwNTkzNH0.B0lrXEa8TUc82yW6rGb024TUTyqYI3gMTuE2QU2XDQc';
+              const supabaseKey = 'sb_publishable_CnZ2j0kBnLgok3J8Tu9WAA_kR31dqWL';
 
               // Fetch toko script keys & catalog
               const [respKeys, respCatalog] = await Promise.all([
                 fetch(`${supabaseUrl}/rest/v1/app_settings?select=value&key=eq.toko_scripts_keys_data`, {
-                  headers: { 'apikey': supabaseKey, 'Authorization': `Bearer ${supabaseKey}` }
+                  headers: { 'apikey': supabaseKey }
                 }),
                 fetch(`${supabaseUrl}/rest/v1/app_settings?select=value&key=eq.toko_scripts_catalog`, {
-                  headers: { 'apikey': supabaseKey, 'Authorization': `Bearer ${supabaseKey}` }
+                  headers: { 'apikey': supabaseKey }
                 })
               ]);
 
@@ -181,7 +181,7 @@ function publicRawScriptPlugin() {
 
               // Check if this is an ArexansTools key
               const axsResp = await fetch(`${supabaseUrl}/rest/v1/app_settings?select=value&key=eq.license_keys`, {
-                headers: { 'apikey': supabaseKey, 'Authorization': `Bearer ${supabaseKey}` }
+                headers: { 'apikey': supabaseKey }
               });
               const axsData = await axsResp.json();
               let axsKeys: any[] = [];
@@ -229,12 +229,11 @@ function publicRawScriptPlugin() {
 
         try {
           const supabaseUrl = 'https://caecqqzbikmwroevvyrd.supabase.co';
-          const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNhZWNxcXpiaWttd3JvZXZ2eXJkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ0Mjk5MzQsImV4cCI6MjEwMDAwNTkzNH0.B0lrXEa8TUc82yW6rGb024TUTyqYI3gMTuE2QU2XDQc';
+          const supabaseKey = 'sb_publishable_CnZ2j0kBnLgok3J8Tu9WAA_kR31dqWL';
 
           const resp = await fetch(`${supabaseUrl}/rest/v1/app_settings?select=value&key=eq.toko_scripts_catalog`, {
             headers: {
-              'apikey': supabaseKey,
-              'Authorization': `Bearer ${supabaseKey}`
+              'apikey': supabaseKey
             }
           });
           const data = await resp.json();
