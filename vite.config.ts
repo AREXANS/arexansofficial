@@ -11,29 +11,6 @@ function publicRawScriptPlugin() {
         const urlStr = req.url || '';
         const pathname = urlStr.split('?')[0] || '';
 
-        // API Endpoint: /loader (for Roblox executors calling loadstring(game:HttpGet(".../loader"))())
-        if (pathname === '/loader') {
-          const userAgent = (req.headers['user-agent'] || '').toLowerCase();
-          const isRoblox = userAgent.includes('roblox') || userAgent.includes('executor') || userAgent.includes('httpclient') || !req.headers.accept?.includes('text/html');
-          
-          if (isRoblox) {
-            try {
-              const supabaseUrl = 'https://caecqqzbikmwroevvyrd.supabase.co';
-              const supabaseKey = 'sb_publishable_CnZ2j0kBnLgok3J8Tu9WAA_kR31dqWL';
-              const fwd = await fetch(`${supabaseUrl}/functions/v1/get-loader?name=keysystem`, {
-                headers: { 'apikey': supabaseKey }
-              });
-              const text = await fwd.text();
-              res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-              res.setHeader('Access-Control-Allow-Origin', '*');
-              return res.end(text);
-            } catch (err: any) {
-              res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-              return res.end(`warn("[Axstools] Error loading loader: ${err.message}")`);
-            }
-          }
-        }
-
         // API Endpoint: /api/validate-key and /api/validate-toko-script-key
         if (pathname === '/api/validate-key' || pathname === '/api/validate-toko-script-key') {
           res.setHeader('Access-Control-Allow-Origin', '*');
@@ -48,49 +25,23 @@ function publicRawScriptPlugin() {
           req.on('data', (chunk: any) => { bodyStr += chunk; });
           req.on('end', async () => {
             try {
-              const urlObj = new URL(urlStr, 'http://localhost');
-              let body: any = {};
-              try { body = JSON.parse(bodyStr || '{}'); } catch {}
+              const body = JSON.parse(bodyStr || '{}');
+              const key = (body.key || '').trim().toUpperCase();
+              const productId = (body.productId || body.productRawId || '').trim();
+              const hwid = (body.hwid || '').trim();
+              const robloxUsername = (body.robloxUsername || 'Unknown').trim();
 
-              const key = (body.key || urlObj.searchParams.get('key') || '').trim().toUpperCase();
-              const productId = (body.productId || body.productRawId || urlObj.searchParams.get('productId') || urlObj.searchParams.get('productRawId') || '').trim();
-              const hwid = (body.hwid || urlObj.searchParams.get('hwid') || '').trim();
-              const robloxUsername = (body.robloxUsername || urlObj.searchParams.get('robloxUsername') || 'Unknown').trim();
+              const SUPABASE_URL = 'https://caecqqzbikmwroevvyrd.supabase.co';
+              const SUPABASE_KEY = 'sb_publishable_CnZ2j0kBnLgok3J8Tu9WAA_kR31dqWL';
 
-              // Special bypass for developer testing
-              if (key === 'DEV_TEST_KEY') {
-                res.setHeader('Content-Type', 'application/json');
-                return res.end(JSON.stringify({
-                  success: true,
-                  valid: true,
-                  role: 'Developer',
-                  productTitle: 'Developer Testing'
-                }));
-              }
-
-              const supabaseUrl = 'https://caecqqzbikmwroevvyrd.supabase.co';
-              const supabaseKey = 'sb_publishable_CnZ2j0kBnLgok3J8Tu9WAA_kR31dqWL';
-
-              // Fetch toko script keys & catalog
-              const [respKeys, respCatalog] = await Promise.all([
-                fetch(`${supabaseUrl}/rest/v1/app_settings?select=value&key=eq.toko_scripts_keys_data`, {
-                  headers: { 'apikey': supabaseKey }
-                }),
-                fetch(`${supabaseUrl}/rest/v1/app_settings?select=value&key=eq.toko_scripts_catalog`, {
-                  headers: { 'apikey': supabaseKey }
-                })
-              ]);
-
-              const dataKeys = await respKeys.json();
-              const dataCatalog = await respCatalog.json();
-
+              // Fetch toko script keys
+              const resp = await fetch(`${SUPABASE_URL}/rest/v1/app_settings?select=value&key=eq.toko_scripts_keys_data`, {
+                headers: { 'apikey': SUPABASE_KEY }
+              });
+              const data = await resp.json();
               let keys: any[] = [];
-              let catalog: any[] = [];
-              if (dataKeys && dataKeys[0]?.value) {
-                try { keys = JSON.parse(dataKeys[0].value); } catch {}
-              }
-              if (dataCatalog && dataCatalog[0]?.value) {
-                try { catalog = JSON.parse(dataCatalog[0].value); } catch {}
+              if (data && data[0]?.value) {
+                try { keys = JSON.parse(data[0].value); } catch {}
               }
 
               const foundKey = keys.find((k: any) => (k.key || '').toUpperCase() === key);
@@ -101,21 +52,7 @@ function publicRawScriptPlugin() {
                   const target = productId.toLowerCase();
                   const keyProd = (foundKey.productId || '').toLowerCase();
                   const keyRaw = (foundKey.productRawId || '').toLowerCase();
-                  
-                  const catalogItem = catalog.find((c: any) => 
-                    (c.id && c.id.toLowerCase() === target) || 
-                    (c.rawId && c.rawId.toLowerCase() === target)
-                  );
-                  const isMatch = (
-                    keyProd === target ||
-                    keyRaw === target ||
-                    (catalogItem && (
-                      (catalogItem.id && catalogItem.id.toLowerCase() === keyProd) ||
-                      (catalogItem.rawId && catalogItem.rawId.toLowerCase() === keyRaw)
-                    ))
-                  );
-
-                  if (!isMatch) {
+                  if (keyProd !== target && keyRaw !== target) {
                     res.setHeader('Content-Type', 'application/json');
                     return res.end(JSON.stringify({
                       success: false,
@@ -163,9 +100,9 @@ function publicRawScriptPlugin() {
                   foundKey.robloxUsers = foundKey.robloxUsers || [];
                   foundKey.robloxUsers.push({ hwid, username: robloxUsername, registeredAt: new Date().toISOString() });
                   
-                  await fetch(`${supabaseUrl}/rest/v1/app_settings?key=eq.toko_scripts_keys_data`, {
+                  await fetch(`${SUPABASE_URL}/rest/v1/app_settings?key=eq.toko_scripts_keys_data`, {
                     method: 'PATCH',
-                    headers: { 'apikey': supabaseKey, 'Authorization': `Bearer ${supabaseKey}`, 'Content-Type': 'application/json' },
+                    headers: { 'apikey': SUPABASE_KEY, 'Content-Type': 'application/json' },
                     body: JSON.stringify({ value: JSON.stringify(keys), updated_at: new Date().toISOString() })
                   });
                 }
@@ -180,8 +117,8 @@ function publicRawScriptPlugin() {
               }
 
               // Check if this is an ArexansTools key
-              const axsResp = await fetch(`${supabaseUrl}/rest/v1/app_settings?select=value&key=eq.license_keys`, {
-                headers: { 'apikey': supabaseKey }
+              const axsResp = await fetch(`${SUPABASE_URL}/rest/v1/app_settings?select=value&key=eq.license_keys`, {
+                headers: { 'apikey': SUPABASE_KEY }
               });
               const axsData = await axsResp.json();
               let axsKeys: any[] = [];
@@ -200,10 +137,10 @@ function publicRawScriptPlugin() {
               }
 
               // Fallback to proxying to supabase validate-key function
-              const fwd = await fetch(`${supabaseUrl}/functions/v1/validate-key`, {
+              const fwd = await fetch(`${SUPABASE_URL}/functions/v1/validate-key`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'apikey': supabaseKey },
-                body: bodyStr || JSON.stringify({ key, productId, hwid, robloxUsername })
+                headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_KEY },
+                body: bodyStr
               });
               const fwdText = await fwd.text();
               res.setHeader('Content-Type', 'application/json');
@@ -223,17 +160,16 @@ function publicRawScriptPlugin() {
         const searchParams = new URL(urlStr, 'http://localhost').searchParams;
         const queryKey = (searchParams.get('key') || '').trim();
         const host = req.headers.host || 'localhost:3000';
-        const isLocal = host.startsWith('localhost') || host.startsWith('127.0.0.1');
-        const proto = isLocal ? (req.headers['x-forwarded-proto'] || 'http') : 'https';
+        const proto = req.headers['x-forwarded-proto'] || 'http';
         const apiOrigin = `${proto}://${host}`;
 
         try {
-          const supabaseUrl = 'https://caecqqzbikmwroevvyrd.supabase.co';
-          const supabaseKey = 'sb_publishable_CnZ2j0kBnLgok3J8Tu9WAA_kR31dqWL';
+          const SUPABASE_URL = 'https://caecqqzbikmwroevvyrd.supabase.co';
+          const SUPABASE_KEY = 'sb_publishable_CnZ2j0kBnLgok3J8Tu9WAA_kR31dqWL';
 
-          const resp = await fetch(`${supabaseUrl}/rest/v1/app_settings?select=value&key=eq.toko_scripts_catalog`, {
+          const resp = await fetch(`${SUPABASE_URL}/rest/v1/app_settings?select=value&key=eq.toko_scripts_catalog`, {
             headers: {
-              'apikey': supabaseKey
+              'apikey': SUPABASE_KEY
             }
           });
           const data = await resp.json();
@@ -246,23 +182,90 @@ function publicRawScriptPlugin() {
 
           if (foundScript && foundScript.luaScript) {
             if (foundScript.isMaintenance) {
-              const notice = (foundScript.maintenanceNotice || 'Script sedang maintenance. Key Anda dibekukan sementara agar tidak rugi.').replace(/"/g, "'");
+              const notice = foundScript.maintenanceNotice || 'Script sedang maintenance. Key Anda dibekukan sementara agar tidak rugi.';
               res.setHeader('Content-Type', 'text/plain; charset=utf-8');
               res.setHeader('Access-Control-Allow-Origin', '*');
-              res.end(`warn("[Axstools] SCRIPT MAINTENANCE: ${notice}")\npcall(function() game:GetService("StarterGui"):SetCore("SendNotification", { Title = "Axstools Maintenance", Text = "${notice}", Duration = 10 }) end)`);
+              res.end(`warn("[Axstools] SCRIPT MAINTENANCE: ${notice}")\npcall(function() game:GetService("StarterGui"):SetCore("SendNotification", { Title = "Axstools Maintenance", Text = "${notice.replace(/"/g, "'")}", Duration = 10 }) end)`);
               return;
             }
 
             const rawScript = foundScript.luaScript;
-            const title = (foundScript.title || 'Toko Script').replace(/"/g, '\\"');
-            const targetId = (foundScript.rawId && foundScript.rawId.trim()) ? foundScript.rawId.trim() : foundScript.id;
+            const title = foundScript.title || 'Toko Script';
+            const apiBase = `${apiOrigin}/supabase-proxy/functions/v1`;
 
             const wrappedScript = `-- [[ AXSTOOLS PROTECTED RUNTIME ]]
--- Title: ${title} (ID: ${targetId})
--- Key System & HWID Protection Layer (Default 1 HWID Slot)
+-- Title: ${title} (ID: ${scriptId})
+-- Key System, HWID & Anti-Dumper Layer (Default 1 HWID Slot)
 
-local KEY = _G.Axstools or _G.AxstoolsKey or _G.Key or _G.LicenseKey
-if (not KEY or KEY == "" or KEY == "keysystem") and "${queryKey}" ~= "" and "${queryKey}" ~= "keysystem" then
+-- ============================================================
+-- [[ AXSTOOLS ANTI-DUMP & SECURITY INTEGRITY ]]
+-- ============================================================
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+if not LocalPlayer then
+    pcall(function()
+        LocalPlayer = Players.PlayerAdded:Wait()
+    end)
+    if not LocalPlayer then
+        LocalPlayer = Players:GetPlayers()[1]
+    end
+end
+
+-- Fungsi Kick Otomatis Jika Terdeteksi Dumper
+local function kickDumper(reason)
+    local kickMsg = "\\n\\n[AXSTOOLS ANTI-DUMP SECURITY]\\n" .. tostring(reason or "Percobaan dumper script terdeteksi!") .. "\\nAkses Anda langsung diblokir."
+    pcall(function()
+        if LocalPlayer and LocalPlayer.Kick then
+            LocalPlayer:Kick(kickMsg)
+        end
+    end)
+    while true do
+        task.wait(9e9)
+    end
+end
+
+-- 1. Scan Dumper & HTTP Spy Tool Aktif
+local function scanForDumpers()
+    if getgenv then
+        local env = getgenv()
+        if env.SimpleSpyExecuted or env.Hydroxide or env.TurtleSpy or env.HttpSpy or env.DexDumper or env.ScriptDumper or env.OwlHubDumper then
+            kickDumper("Dumper / HTTP Spy tool terdeteksi aktif di background!")
+            return false
+        end
+    end
+    return true
+end
+
+if not scanForDumpers() then return end
+
+-- 2. Anti-Decompile / Memory Inspection Traps
+pcall(function()
+    if debug and type(debug.getinfo) == "function" then
+        local ok, info = pcall(debug.getinfo, 1)
+        if not ok or not info then
+            kickDumper("Tampering debug environment terdeteksi!")
+        end
+    end
+end)
+
+-- 3. Background Continuous Scanner
+task.spawn(function()
+    while task.wait(3) do
+        if getgenv then
+            local env = getgenv()
+            if env.SimpleSpyExecuted or env.Hydroxide or env.TurtleSpy or env.HttpSpy or env.DexDumper or env.ScriptDumper or env.OwlHubDumper then
+                kickDumper("Dumper / HTTP Spy dijalankan saat script sedang aktif!")
+                break
+            end
+        end
+    end
+end)
+
+-- ============================================================
+-- [[ KEY SYSTEM & HWID VERIFICATION ]]
+-- ============================================================
+local KEY = _G.Axstools
+if (not KEY or KEY == "" or KEY == "keysystem") and "${queryKey}" ~= "" then
     KEY = "${queryKey}"
 end
 
@@ -280,27 +283,9 @@ if not KEY or KEY == "" or KEY == "keysystem" then
 end
 
 local HttpService = game:GetService("HttpService")
-local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
-if not LocalPlayer then
-    pcall(function()
-        LocalPlayer = Players:GetPropertyChangedSignal("LocalPlayer"):Wait() or Players.LocalPlayer
-    end)
-end
 
 local function getHwid()
-    local hwid = nil
-    pcall(function()
-        if type(gethwid) == "function" then
-            hwid = gethwid()
-        elseif type(get_hwid) == "function" then
-            hwid = get_hwid()
-        elseif type(getexecutorhwid) == "function" then
-            hwid = getexecutorhwid()
-        end
-    end)
-    if hwid and tostring(hwid) ~= "" then return tostring(hwid) end
-
     local ok, id = pcall(function() return game:GetService("RbxAnalyticsService"):GetClientId() end)
     if ok and id and tostring(id) ~= "" then return tostring(id) end
     return LocalPlayer and tostring(LocalPlayer.UserId) or "FALLBACK_HWID"
@@ -311,44 +296,22 @@ local USERNAME = LocalPlayer and LocalPlayer.Name or "Unknown"
 
 local function httpRequest(opts)
     local req = (syn and syn.request) or (http and http.request) or (fluxus and fluxus.request) or request or http_request
-    local compatOpts = {
-        Url = opts.Url or opts.url,
-        url = opts.Url or opts.url,
-        Method = opts.Method or opts.method or "GET",
-        method = opts.Method or opts.method or "GET",
-        Headers = opts.Headers or opts.headers or { ["Content-Type"] = "application/json" },
-        headers = opts.Headers or opts.headers or { ["Content-Type"] = "application/json" },
-        Body = opts.Body or opts.body,
-        body = opts.Body or opts.body
-    }
     if req then
-        local ok, res = pcall(req, compatOpts)
-        if ok and res then
-            local rBody = res.Body or res.body or res.data or ""
-            local rStatus = res.StatusCode or res.status_code or res.Status or res.statusCode or 200
-            return { StatusCode = rStatus, Body = tostring(rBody), Success = true }
-        end
+        local ok, res = pcall(req, opts)
+        if ok and res then return res end
     end
-
-    local getUrl = opts.Url or opts.url
-    if opts.QueryStr and opts.QueryStr ~= "" then
-        getUrl = getUrl .. (string.find(getUrl, "?") and "&" or "?") .. opts.QueryStr
-    end
-    local ok, body = pcall(function() return game:HttpGet(getUrl) end)
-    if ok and body then
-        return { StatusCode = 200, Body = tostring(body), Success = true }
-    end
+    local ok, body = pcall(function() return game:HttpGet(opts.Url) end)
+    if ok and body then return { StatusCode = 200, Body = body } end
     return nil
 end
 
 local VALIDATE_URL = "${apiOrigin}/api/validate-key"
-local queryParams = "key=" .. HttpService:UrlEncode(tostring(KEY)) .. "&productId=" .. HttpService:UrlEncode("${targetId}") .. "&hwid=" .. HttpService:UrlEncode(tostring(HWID)) .. "&robloxUsername=" .. HttpService:UrlEncode(tostring(USERNAME))
 local payload = HttpService:JSONEncode({
-    key = tostring(KEY),
-    productId = "${targetId}",
-    productTitle = "${title}",
-    hwid = tostring(HWID),
-    robloxUsername = tostring(USERNAME)
+    key = KEY,
+    productId = "${scriptId}",
+    productTitle = "${title.replace(/"/g, '\\"')}",
+    hwid = HWID,
+    robloxUsername = USERNAME
 })
 
 local res = httpRequest({
@@ -357,8 +320,7 @@ local res = httpRequest({
     Headers = {
         ["Content-Type"] = "application/json"
     },
-    Body = payload,
-    QueryStr = queryParams
+    Body = payload
 })
 
 local isValid = false
@@ -366,14 +328,14 @@ local errorMsg = "Gagal menghubungi server verifikasi Axstools."
 local hwidLimitReached = false
 local isFrozen = false
 
-if res and res.Body and res.Body ~= "" then
+if res and res.Body then
     local ok, data = pcall(function() return HttpService:JSONDecode(res.Body) end)
     if ok and type(data) == "table" then
         if data.valid or data.success then
             isValid = true
         else
             errorMsg = data.error or data.message or "Key tidak valid"
-            if data.hwid_limit_reached or data.hwidLimitReached or (data.error and (string.find(string.lower(data.error), "batas perangkat") or string.find(string.lower(data.error), "maximum devices"))) then
+            if data.hwid_limit_reached or (data.error and string.find(string.lower(data.error), "maximum devices")) then
                 hwidLimitReached = true
             end
             if data.frozen then
@@ -427,8 +389,7 @@ pcall(function()
 end)
 
 -- [[ SCRIPT LANGSUNG JALAN DARI DEVELOPER ]]
-${rawScript}
-`;
+${rawScript}`;
 
             res.setHeader('Content-Type', 'text/plain; charset=utf-8');
             res.setHeader('Access-Control-Allow-Origin', '*');
@@ -456,7 +417,9 @@ export default defineConfig(({ mode }) => ({
   server: {
     host: "0.0.0.0",
     port: 3000,
-    hmr: false,
+    hmr: {
+      overlay: false,
+    },
     proxy: {
       '/supabase-proxy': {
         target: 'https://caecqqzbikmwroevvyrd.supabase.co',
@@ -469,6 +432,12 @@ export default defineConfig(({ mode }) => ({
         changeOrigin: true,
         secure: false,
         rewrite: (path) => path.replace(/^\/casaku-proxy/, ''),
+      },
+      '/xmpayment-proxy': {
+        target: 'https://xmpayment.my.id',
+        changeOrigin: true,
+        secure: false,
+        rewrite: (path) => path.replace(/^\/xmpayment-proxy/, ''),
       },
       '/pakasir-proxy': {
         target: 'https://app.pakasir.com',

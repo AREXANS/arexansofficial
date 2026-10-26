@@ -2,7 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import {
   corsHeaders, jsonHeaders, loadPaymentConfig,
-  arexansCancel, clearGatewayTxId, getGatewayTxId, pakasirCancel,
+  arexansCancel, clearGatewayTxId, getGatewayTxId, xmpaymentCancel, pakasirCancel,
 } from "../_shared/payment.ts";
 
 serve(async (req) => {
@@ -18,6 +18,11 @@ serve(async (req) => {
 
     const cfg = await loadPaymentConfig(supabase);
     const gatewayTxId = await getGatewayTxId(supabase, transactionId);
+
+    // Cancel in XMPayment if configured
+    if (cfg.xmpayment.configured) {
+      await xmpaymentCancel(cfg, transactionId);
+    }
 
     if (gatewayTxId) {
       await arexansCancel(cfg, gatewayTxId);

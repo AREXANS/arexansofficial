@@ -8,8 +8,6 @@ import MaintenancePage from '@/components/MaintenancePage';
 import { toast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
 import { isDeveloperTesting, getMaintenanceState } from '@/lib/maintenanceStore';
-import { useReferralTracking } from '@/hooks/useReferralTracking';
-import { recordResellerSale, getStoredReferral } from '@/lib/tokoScriptStore';
 
 interface Ad {
   id: string;
@@ -78,7 +76,6 @@ const getDeviceId = (): string => {
 
 const Index = () => {
   const [searchParams, setSearchParams] = useSearchParams();
-  const { referral } = useReferralTracking();
   const [step, setStep] = useState(1);
   const [selectedPkg, setSelectedPkg] = useState<'NORMAL' | 'VIP' | 'LIFETIME' | null>(null);
   const [formData, setFormData] = useState({ key: '', duration: '' });
@@ -319,43 +316,6 @@ const Index = () => {
         saveState(4, null, newFinalData, days);
         setStatusMsg('');
         
-        // -------------------------------------------------------------
-        // SMART RESELLER COMMISSION AUTO-CREDITING
-        // -------------------------------------------------------------
-        try {
-          const pendingSaleRaw = localStorage.getItem(`pending_reseller_order_${transactionId}`);
-          if (pendingSaleRaw) {
-            const saleParams = JSON.parse(pendingSaleRaw);
-            recordResellerSale(saleParams).then((sale) => {
-              if (sale) {
-                console.log('[Reseller] Commission credited for Toko Script:', sale);
-              }
-            });
-            localStorage.removeItem(`pending_reseller_order_${transactionId}`);
-          } else {
-            const storedRef = getStoredReferral();
-            if (storedRef?.code) {
-              recordResellerSale({
-                resellerCode: storedRef.code,
-                productSource: 'arexans_tools',
-                productId: 'arexans_tools_' + (selectedPkg || 'NORMAL').toLowerCase(),
-                productTitle: `Arexans Tools (${selectedPkg || 'NORMAL'})`,
-                packageName: `${days} Hari`,
-                packageDays: days,
-                salePrice: paymentData?.totalAmount || 0,
-                buyerKey: formData.key,
-                transactionId: transactionId,
-              }).then((sale) => {
-                if (sale) {
-                  console.log('[Reseller] Commission credited for Arexans Tools:', sale);
-                }
-              });
-            }
-          }
-        } catch (rErr) {
-          console.warn('[Reseller] Auto-credit error:', rErr);
-        }
-
         toast({ 
           title: "Pembayaran Berhasil!", 
           description: "Terima kasih atas pembelian Anda." 
@@ -463,10 +423,10 @@ const Index = () => {
     }
 
     // If admin enabled both gateways, ask user which one to use.
-    // But if developer device is offline, ArexansPay won't work realtime → auto-fallback to Pakasir.
+    // But if developer device is offline, ArexansPay won't work realtime → auto-fallback to XMPayment.
     if (gatewaySetting === 'both') {
       if (!developerOnline) {
-        await createPayment(calculatedAmount, durationData!.days, submittedPromoCode, 'pakasir');
+        await createPayment(calculatedAmount, durationData!.days, submittedPromoCode, 'xmpayment');
         return;
       }
       setPendingPayment({
@@ -479,16 +439,16 @@ const Index = () => {
       return;
     }
 
-    // Single-gateway ArexansPay but developer offline → fallback to Pakasir
+    // Single-gateway ArexansPay but developer offline → fallback to XMPayment
     if ((gatewaySetting === 'arexanspay' || gatewaySetting === 'cashify' || gatewaySetting === 'casaku') && !developerOnline) {
-      await createPayment(calculatedAmount, durationData!.days, submittedPromoCode, 'pakasir');
+      await createPayment(calculatedAmount, durationData!.days, submittedPromoCode, 'xmpayment');
       return;
     }
 
     await createPayment(calculatedAmount, durationData!.days, submittedPromoCode);
   };
 
-  const createPayment = async (amount: number, days: number, promoCode?: string, gatewayOverride?: 'arexanspay' | 'pakasir') => {
+  const createPayment = async (amount: number, days: number, promoCode?: string, gatewayOverride?: 'arexanspay' | 'xmpayment' | 'pakasir') => {
     setLoading(true);
     try {
       const response = await supabase.functions.invoke('create-payment', {
@@ -574,7 +534,6 @@ const Index = () => {
       ads={ads}
       packages={packages}
       defaultTab={tabParam === 'toko' ? 'toko' : 'tools'}
-      resellerCode={referral?.code}
       onTokoScriptOrderQris={handleTokoScriptQris}
     />
   );
@@ -592,7 +551,6 @@ const Index = () => {
         formatRupiah={formatRupiah}
         parseDuration={parseDuration}
         prices={PRICES}
-        resellerCode={referral?.code}
       />
       {pendingPayment && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
@@ -614,14 +572,14 @@ const Index = () => {
                 <p className="text-xs opacity-80 mt-1">Tidak ada pajak</p>
               </button>
               <button
-                onClick={async () => { const p = pendingPayment; setPendingPayment(null); await createPayment(p.amount, p.days, p.promoCode, 'pakasir'); }}
+                onClick={async () => { const p = pendingPayment; setPendingPayment(null); await createPayment(p.amount, p.days, p.promoCode, 'xmpayment'); }}
                 className="w-full p-3 rounded-xl bg-secondary/20 hover:bg-secondary/30 border border-secondary/50 text-secondary text-left transition"
               >
                 <div className="flex items-center justify-between">
-                  <span className="font-semibold">Qris 2</span>
+                  <span className="font-semibold">Qris 2 (XMPayment)</span>
                   <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/40">Online</span>
                 </div>
-                <p className="text-xs opacity-80 mt-1">Ada pajak</p>
+                <p className="text-xs opacity-80 mt-1">Otomatis & Kode Unik Realtime</p>
               </button>
               <button
                 onClick={() => setPendingPayment(null)}

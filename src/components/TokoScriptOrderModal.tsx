@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { TokoScriptProduct, ScriptPackage } from '@/types/tokoScript';
-import { getScriptRawId, getStoredReferral, findResellerByCode } from '@/lib/tokoScriptStore';
+import { getScriptRawId, recordResellerSale } from '@/lib/tokoScriptStore';
 import { createTokoScriptKey } from '@/lib/tokoScriptKeyStore';
 import { getMaintenanceState, isDeveloperTesting } from '@/lib/maintenanceStore';
 import { supabase } from '@/integrations/supabase/client';
@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
-import { Dices, ShieldCheck, Loader2, Sparkles, CheckCircle2, QrCode, Tag, UserCheck, X } from 'lucide-react';
+import { Dices, ShieldCheck, Loader2, Sparkles, CheckCircle2, QrCode, Tag } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 
 interface TokoScriptOrderModalProps {
@@ -28,6 +28,7 @@ interface TokoScriptOrderModalProps {
     packageName: string;
     productTitle: string;
     days: number;
+    productId?: string;
   }) => void;
 }
 
@@ -36,29 +37,13 @@ export const TokoScriptOrderModal: React.FC<TokoScriptOrderModalProps> = ({
   onClose,
   product,
   resellerCode,
+  onPaymentSuccess,
   onOpenQris,
 }) => {
   const [licenseKey, setLicenseKey] = useState('');
   const [selectedPackageId, setSelectedPackageId] = useState<string>('');
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
-
-  // Referral state
-  const [activeReseller, setActiveReseller] = useState<{ username: string; name: string } | null>(null);
-  const [showRefInput, setShowRefInput] = useState(false);
-  const [inputRefCode, setInputRefCode] = useState('');
-
-  // Check stored referral or prop
-  useEffect(() => {
-    const code = resellerCode || getStoredReferral()?.code;
-    if (code) {
-      findResellerByCode(code).then((acc) => {
-        if (acc && acc.isActive) {
-          setActiveReseller({ username: acc.username, name: acc.payoutAccountName || acc.username });
-        }
-      });
-    }
-  }, [resellerCode, isOpen]);
 
   // When modal opens or product changes, pick first active package
   useEffect(() => {
@@ -117,8 +102,9 @@ export const TokoScriptOrderModal: React.FC<TokoScriptOrderModalProps> = ({
     setLoading(true);
 
     try {
-      const txId = 'TXS-' + Math.random().toString(36).slice(2, 8).toUpperCase() + Date.now().toString().slice(-4);
-      const amount = selectedPackage.price;
+      let txId = 'TXS-' + Math.random().toString(36).slice(2, 8).toUpperCase() + Date.now().toString().slice(-4);
+      const originalAmount = selectedPackage.price;
+      let amount = originalAmount;
       const deviceId = localStorage.getItem('arexans_device_id') || 'DEV-' + Math.random().toString(36).slice(2, 8).toUpperCase();
       const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
 
@@ -138,9 +124,11 @@ export const TokoScriptOrderModal: React.FC<TokoScriptOrderModalProps> = ({
           }
         });
 
-        if (!edgeError && edgeData?.qr_string) {
-          qrString = edgeData.qr_string;
-          qrisUrl = edgeData.qris_url || qrisUrl;
+        if (!edgeError && edgeData) {
+          if (edgeData.transactionId) txId = edgeData.transactionId;
+          if (edgeData.qr_string) qrString = edgeData.qr_string;
+          if (edgeData.qris_url) qrisUrl = edgeData.qris_url;
+          if (edgeData.totalAmount) amount = edgeData.totalAmount;
         }
       } catch (e) {
         console.warn('Edge function invoke failed, using generated QRIS fallback:', e);
@@ -183,11 +171,10 @@ export const TokoScriptOrderModal: React.FC<TokoScriptOrderModalProps> = ({
         console.warn('Could not pre-register toko script key:', keyErr);
       }
 
-      // Tag pending reseller sale (commission will be credited instantly once paid)
-      const finalResellerCode = activeReseller?.username || resellerCode || getStoredReferral()?.code;
-      if (finalResellerCode) {
-        localStorage.setItem(`pending_reseller_order_${txId}`, JSON.stringify({
-          resellerCode: finalResellerCode,
+      // If reseller code is present, record the sale
+      if (resellerCode) {
+        await recordResellerSale({
+          resellerCode,
           productSource: 'toko_script',
           productId: product.id,
           productTitle: product.title,
@@ -196,7 +183,7 @@ export const TokoScriptOrderModal: React.FC<TokoScriptOrderModalProps> = ({
           salePrice: amount,
           buyerKey: cleanKey,
           transactionId: txId,
-        }));
+        });
       }
 
       toast({
@@ -234,10 +221,9 @@ export const TokoScriptOrderModal: React.FC<TokoScriptOrderModalProps> = ({
             <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-primary/20 text-primary border border-primary/40">
               Order Script
             </span>
-            {activeReseller && (
-              <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center gap-1 font-medium">
-                <UserCheck className="w-3 h-3" />
-                Mitra: @{activeReseller.username}
+            {resellerCode && (
+              <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                Ref: {resellerCode}
               </span>
             )}
           </div>
@@ -250,61 +236,6 @@ export const TokoScriptOrderModal: React.FC<TokoScriptOrderModalProps> = ({
         </DialogHeader>
 
         <div className="space-y-4 pt-1">
-          {/* Mitra Afiliasi Badge / Input */}
-          {activeReseller ? (
-            <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/25 flex items-center justify-between text-xs">
-              <div className="flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                <span className="text-foreground">
-                  Mitra Afiliasi: <strong className="text-emerald-400">@{activeReseller.username}</strong>
-                </span>
-              </div>
-              <button
-                type="button"
-                onClick={() => setActiveReseller(null)}
-                className="text-[10px] text-muted-foreground hover:text-destructive flex items-center gap-0.5"
-              >
-                <X className="w-3 h-3" />
-                Ganti
-              </button>
-            </div>
-          ) : showRefInput ? (
-            <div className="flex items-center gap-2 p-2 rounded-xl bg-muted/40 border border-border">
-              <Input
-                value={inputRefCode}
-                onChange={(e) => setInputRefCode(e.target.value)}
-                placeholder="Username reseller / referral..."
-                className="h-8 text-xs rounded-lg"
-              />
-              <Button
-                type="button"
-                size="sm"
-                onClick={async () => {
-                  if (!inputRefCode.trim()) return;
-                  const acc = await findResellerByCode(inputRefCode);
-                  if (acc && acc.isActive) {
-                    setActiveReseller({ username: acc.username, name: acc.payoutAccountName || acc.username });
-                    setShowRefInput(false);
-                    toast({ title: 'Reseller Terhubung!', description: `Mendukung reseller @${acc.username}` });
-                  } else {
-                    toast({ title: 'Tidak Ditemukan', description: 'Username reseller tidak ditemukan.', variant: 'destructive' });
-                  }
-                }}
-                className="h-8 text-xs px-3 rounded-lg"
-              >
-                Terapkan
-              </Button>
-            </div>
-          ) : (
-            <button
-              type="button"
-              onClick={() => setShowRefInput(true)}
-              className="text-[11px] text-muted-foreground hover:text-primary flex items-center gap-1 transition-colors pt-0.5"
-            >
-              <Tag className="w-3 h-3" />
-              Punya kode/link reseller? Klik di sini
-            </button>
-          )}
           {/* 1. KOLOM KEY CUSTOM / ACAK */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">

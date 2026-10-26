@@ -29,6 +29,8 @@ import {
   generateScriptLoaderCode,
   DEFAULT_RESELLER_GLOBAL_SETTINGS,
   RESELLER_REGISTRATION_PRICE,
+  getTokoScriptHomeVisibility,
+  setTokoScriptHomeVisibility,
 } from '@/lib/tokoScriptStore';
 import { uploadMediaFile } from '@/utils/mediaUpload';
 import { Button } from '@/components/ui/button';
@@ -76,16 +78,13 @@ import {
   Copy,
   ExternalLink,
   Key,
-  Eye,
-  QrCode,
 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
-import { freezeTokoScriptKeys, unfreezeTokoScriptKeys } from '@/lib/tokoScriptKeyStore';
+import { freezeProductKeys, unfreezeProductKeys } from '@/lib/maintenanceStore';
 import { TokoScriptKeyManagement } from './TokoScriptKeyManagement';
 
 export const TokoScriptAdmin: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'products' | 'keysystem' | 'resellers' | 'withdrawals'>('products');
-  const [viewQrisModalImage, setViewQrisModalImage] = useState<string | null>(null);
   const [products, setProducts] = useState<TokoScriptProduct[]>([]);
   const [resellers, setResellers] = useState<ResellerAccount[]>([]);
   const [withdrawals, setWithdrawals] = useState<CommissionWithdrawal[]>([]);
@@ -141,6 +140,10 @@ export const TokoScriptAdmin: React.FC = () => {
   const [resBuyerDiscountPct, setResBuyerDiscountPct] = useState(10);
   const [resIsActive, setResIsActive] = useState(true);
 
+  // Status tampilan Toko Script di halaman awal (home)
+  const [showOnHome, setShowOnHome] = useState(false);
+  const [togglingVisibility, setTogglingVisibility] = useState(false);
+
   useEffect(() => {
     loadAllData();
   }, []);
@@ -148,22 +151,43 @@ export const TokoScriptAdmin: React.FC = () => {
   const loadAllData = async () => {
     setLoading(true);
     try {
-      const [prodData, resData, wdData, slData, settingsData] = await Promise.all([
+      const [prodData, resData, wdData, slData, settingsData, homeVisible] = await Promise.all([
         getTokoScripts(),
         getResellerAccounts(),
         getCommissionWithdrawals(),
         getResellerSales(),
         getResellerGlobalSettings(),
+        getTokoScriptHomeVisibility(),
       ]);
       setProducts(prodData);
       setResellers(resData);
       setWithdrawals(wdData);
       setSales(slData);
       setGlobalSettings(settingsData);
+      setShowOnHome(homeVisible);
     } catch (e) {
       console.error(e);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleToggleHomeVisibility = async (newVal: boolean) => {
+    setTogglingVisibility(true);
+    try {
+      setShowOnHome(newVal);
+      await setTokoScriptHomeVisibility(newVal);
+      toast({
+        title: newVal ? 'Toko Script Aktif di Halaman Utama' : 'Toko Script Disembunyikan',
+        description: newVal
+          ? 'Toko Script kini muncul di halaman utama berdampingan dengan Arexans Tools.'
+          : 'Halaman utama sekarang hanya menampilkan Arexans Tools saja.',
+      });
+    } catch (err: any) {
+      toast({ title: 'Gagal Mengubah Visibilitas', description: err.message, variant: 'destructive' });
+      setShowOnHome(!newVal);
+    } finally {
+      setTogglingVisibility(false);
     }
   };
 
@@ -261,20 +285,20 @@ export const TokoScriptAdmin: React.FC = () => {
       });
 
       if (nextState) {
-        const res = await freezeTokoScriptKeys(prod.id);
+        const res = await freezeProductKeys('all');
         toast({
           title: 'Produk Dikunci Maintenance',
           description: `Script "${prod.title}" dikunci. ${res?.count || 0} key pelanggan dibekukan sementara agar tidak rugi.`,
         });
       } else {
-        const res = await unfreezeTokoScriptKeys(prod.id);
+        const res = await unfreezeProductKeys('all');
         toast({
           title: 'Maintenance Selesai',
           description: `Script "${prod.title}" dibuka kembali normal. ${res?.count || 0} key aktif dilanjutkan secara utuh.`,
         });
       }
 
-      await loadAllData();
+      loadAllData();
     } catch (e: any) {
       toast({ title: 'Gagal', description: e.message, variant: 'destructive' });
     }
@@ -284,7 +308,7 @@ export const TokoScriptAdmin: React.FC = () => {
     if (!confirm('Apakah Anda yakin ingin menghapus produk script ini?')) return;
     await deleteTokoScript(id);
     toast({ title: 'Produk Dihapus', description: 'Script berhasil dihapus dari katalog Toko Script.' });
-    await loadAllData();
+    loadAllData();
   };
 
   // Add media URL directly
@@ -360,14 +384,32 @@ export const TokoScriptAdmin: React.FC = () => {
 
     setSavingProduct(true);
     try {
-      const cleanRawId = formRawId.trim() ? formRawId.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '-') : '';
+      const cleanRawId = formRawId.trim() ? formRawId.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '-') : undefined;
 
       if (editingId) {
         const existingProd = products.find((p) => p.id === editingId);
+        const resolvedRawId = cleanRawId || existingProd?.rawId || editingId;
+
+        // Optimistically update local state so UI instantly reflects changes
+        setProducts(prev => prev.map(p => p.id === editingId ? {
+          ...p,
+          title: formTitle.trim(),
+          description: formDescription.trim(),
+          rawId: resolvedRawId,
+          luaScript: formLuaScript,
+          media: formMedia,
+          packages: formPackages,
+          resellerCommissionPct: Number(formCommissionPct) || 20,
+          isActive: formIsActive,
+          isMaintenance: formIsMaintenance,
+          maintenanceNotice: formMaintenanceNotice.trim(),
+          updatedAt: new Date().toISOString(),
+        } : p));
+
         await updateTokoScript(editingId, {
           title: formTitle.trim(),
           description: formDescription.trim(),
-          rawId: cleanRawId,
+          rawId: resolvedRawId,
           luaScript: formLuaScript,
           media: formMedia,
           packages: formPackages,
@@ -378,16 +420,16 @@ export const TokoScriptAdmin: React.FC = () => {
           maintenanceStartedAt: formIsMaintenance ? (existingProd?.maintenanceStartedAt || new Date().toISOString()) : null,
         });
 
-        // If maintenance status toggled, freeze or unfreeze keys specifically for this product
+        // If maintenance status toggled, freeze or unfreeze keys automatically
         if (existingProd && existingProd.isMaintenance !== formIsMaintenance) {
           if (formIsMaintenance) {
-            const res = await freezeTokoScriptKeys(editingId);
+            const res = await freezeProductKeys('toko_script');
             toast({
               title: 'Script Dikunci Maintenance',
               description: `Script "${formTitle.trim()}" dikunci. ${res?.count || 0} key pelanggan dibekukan sementara agar tidak rugi.`,
             });
           } else {
-            const res = await unfreezeTokoScriptKeys(editingId);
+            const res = await unfreezeProductKeys('toko_script');
             toast({
               title: 'Maintenance Selesai',
               description: `Script "${formTitle.trim()}" dibuka normal. ${res?.count || 0} key dilanjutkan durasinya secara utuh.`,
@@ -397,7 +439,7 @@ export const TokoScriptAdmin: React.FC = () => {
           toast({ title: 'Script Diperbarui', description: 'Perubahan produk & script berhasil disimpan.' });
         }
       } else {
-        await addTokoScript({
+        const newProduct = await addTokoScript({
           title: formTitle.trim(),
           description: formDescription.trim(),
           rawId: cleanRawId,
@@ -409,13 +451,17 @@ export const TokoScriptAdmin: React.FC = () => {
           isMaintenance: formIsMaintenance,
           maintenanceNotice: formMaintenanceNotice.trim(),
         });
+        if (newProduct) {
+          setProducts(prev => [...prev, newProduct]);
+        }
         toast({ title: 'Script Ditambahkan', description: 'Script baru kini tersedia di Toko Script.' });
       }
 
       setIsModalOpen(false);
-      await loadAllData();
+      loadAllData();
     } catch (err: any) {
-      toast({ title: 'Gagal Menyimpan', description: err.message || 'Terjadi kesalahan saat menyimpan', variant: 'destructive' });
+      console.error('Save product error:', err);
+      toast({ title: 'Gagal Menyimpan', description: err.message || 'Terjadi kesalahan saat menyimpan.', variant: 'destructive' });
     } finally {
       setSavingProduct(false);
     }
@@ -580,6 +626,42 @@ export const TokoScriptAdmin: React.FC = () => {
             <Plus className="w-4 h-4" />
             Tambah Script Baru
           </Button>
+        </div>
+      </div>
+
+      {/* Visibility on Homepage Toggle Banner */}
+      <div className="p-4 rounded-2xl glass-card border border-border/80 flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-card/60 backdrop-blur-xl shadow-lg">
+        <div className="flex items-start sm:items-center gap-3">
+          <div className={`p-2.5 rounded-xl transition-colors ${showOnHome ? 'bg-primary/20 text-primary border border-primary/40' : 'bg-muted/60 text-muted-foreground border border-border'}`}>
+            <ShoppingBag className="w-5 h-5" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-bold text-foreground">
+                Tampilkan Toko Script di Halaman Utama
+              </span>
+              <Badge variant={showOnHome ? 'default' : 'outline'} className={`text-[10px] ${showOnHome ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40' : 'text-muted-foreground'}`}>
+                {showOnHome ? 'Aktif di Halaman Utama' : 'Disembunyikan / Nonaktif'}
+              </Badge>
+            </div>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {showOnHome
+                ? 'Tab Toko Script ditampilkan di halaman depan bersama Arexans Tools.'
+                : 'Toko Script disembunyikan dari halaman utama (hanya Arexans Tools yang tampil).'}
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-3 self-end sm:self-auto">
+          <Label htmlFor="toko-visibility-switch" className="text-xs font-medium text-muted-foreground cursor-pointer">
+            {showOnHome ? 'Nonaktifkan / Sembunyikan' : 'Aktifkan di Halaman Utama'}
+          </Label>
+          <Switch
+            id="toko-visibility-switch"
+            checked={showOnHome}
+            disabled={togglingVisibility}
+            onCheckedChange={handleToggleHomeVisibility}
+          />
         </div>
       </div>
 
@@ -1003,28 +1085,9 @@ export const TokoScriptAdmin: React.FC = () => {
                             </span>
                             <span>{r.phone}</span>
                           </div>
-                          {r.payoutMethod === 'QRIS' && (r.payoutQrisUrl || r.payoutAccountNumber?.startsWith('data:image')) ? (
-                            <div className="flex items-center gap-2 mt-1">
-                              <img
-                                src={r.payoutQrisUrl || r.payoutAccountNumber}
-                                alt="QRIS"
-                                onClick={() => setViewQrisModalImage(r.payoutQrisUrl || r.payoutAccountNumber)}
-                                className="w-8 h-8 rounded border border-border object-cover cursor-pointer hover:opacity-80"
-                              />
-                              <button
-                                type="button"
-                                onClick={() => setViewQrisModalImage(r.payoutQrisUrl || r.payoutAccountNumber)}
-                                className="text-[11px] text-primary hover:underline font-semibold flex items-center gap-1"
-                              >
-                                <Eye className="w-3 h-3" />
-                                Scan QRIS ({r.payoutAccountName})
-                              </button>
-                            </div>
-                          ) : (
-                            <div className="text-[11px] text-muted-foreground font-mono">
-                              {r.payoutAccountNumber} ({r.payoutAccountName})
-                            </div>
-                          )}
+                          <div className="text-[11px] text-muted-foreground font-mono">
+                            {r.payoutAccountNumber} ({r.payoutAccountName})
+                          </div>
                         </td>
                         <td className="p-3 text-right">
                           <div className="font-bold font-mono">{formatRupiah(r.totalSalesAmount)}</div>
@@ -1141,19 +1204,7 @@ export const TokoScriptAdmin: React.FC = () => {
                           <div className="text-[10px] text-primary font-mono">{w.resellerCode}</div>
                         </td>
                         <td className="p-3">
-                          <span className="font-semibold">{w.payoutMethod}</span>:{' '}
-                          {w.payoutMethod === 'QRIS' && (w.qrisImageUrl || w.accountNumber?.startsWith('data:image')) ? (
-                            <button
-                              type="button"
-                              onClick={() => setViewQrisModalImage(w.qrisImageUrl || w.accountNumber)}
-                              className="text-primary hover:underline font-semibold inline-flex items-center gap-1 ml-1"
-                            >
-                              <Eye className="w-3 h-3" />
-                              Lihat Foto QRIS ({w.accountName})
-                            </button>
-                          ) : (
-                            `${w.accountNumber} (${w.accountName})`
-                          )}
+                          <span className="font-semibold">{w.payoutMethod}</span>: {w.accountNumber} ({w.accountName})
                         </td>
                         <td className="p-3 text-right font-mono font-bold text-emerald-400">
                           {formatRupiah(w.amount)}
@@ -1570,12 +1621,18 @@ export const TokoScriptAdmin: React.FC = () => {
               </Button>
               <Button
                 type="button"
-                disabled={savingProduct}
                 onClick={handleSaveProduct}
-                className="flex-1 rounded-xl text-xs font-bold bg-primary hover:bg-primary/90 text-primary-foreground h-10 shadow-md shadow-primary/20 flex items-center justify-center gap-1.5"
+                disabled={savingProduct}
+                className="flex-1 rounded-xl text-xs font-bold bg-primary hover:bg-primary/90 text-primary-foreground h-10 shadow-md shadow-primary/20 gap-1.5"
               >
-                {savingProduct && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
-                {savingProduct ? 'Menyimpan...' : (editingId ? 'Simpan Perubahan' : 'Buat Produk Script')}
+                {savingProduct ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    Menyimpan...
+                  </>
+                ) : (
+                  editingId ? 'Simpan Perubahan' : 'Buat Produk Script'
+                )}
               </Button>
             </div>
           </div>
@@ -1832,39 +1889,6 @@ export const TokoScriptAdmin: React.FC = () => {
               </Button>
             </div>
           </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* DIALOG SCAN / LIHAT GAMBAR QRIS RESELLER */}
-      <Dialog open={!!viewQrisModalImage} onOpenChange={(open) => !open && setViewQrisModalImage(null)}>
-        <DialogContent className="max-w-sm p-5 bg-card/95 backdrop-blur-2xl border-border/80 rounded-2xl">
-          <DialogHeader>
-            <DialogTitle className="text-sm font-bold flex items-center gap-2">
-              <QrCode className="w-4 h-4 text-primary" />
-              Scan QRIS Reseller untuk Transfer Komisi
-            </DialogTitle>
-          </DialogHeader>
-          <div className="p-3 bg-white rounded-xl flex items-center justify-center shadow-inner">
-            {viewQrisModalImage && (
-              <img
-                src={viewQrisModalImage}
-                alt="QRIS Reseller"
-                className="max-h-[320px] w-auto object-contain rounded"
-              />
-            )}
-          </div>
-          <div className="text-center text-[11px] text-muted-foreground">
-            Buka aplikasi BCA / DANA / GoPay / Bank Anda dan scan kode QRIS di atas untuk mencairkan komisi reseller.
-          </div>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => setViewQrisModalImage(null)}
-            className="w-full text-xs h-9 rounded-xl mt-2"
-          >
-            Tutup
-          </Button>
         </DialogContent>
       </Dialog>
     </div>

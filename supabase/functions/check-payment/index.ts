@@ -2,7 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import {
   corsHeaders, jsonHeaders, loadPaymentConfig, PAID_STATUSES,
-  arexansCheckStatus, clearGatewayTxId, getGatewayTxId, pakasirIsPaid,
+  arexansCheckStatus, clearGatewayTxId, getGatewayTxId, xmpaymentCheckStatus, pakasirIsPaid,
 } from "../_shared/payment.ts";
 
 serve(async (req) => {
@@ -33,18 +33,32 @@ serve(async (req) => {
     let isPaid = false;
     let cancelled = false;
 
-    if (gatewayTxId) {
+    // 1. Check XMPayment first (by order_id / transactionId)
+    if (cfg.xmpayment.configured) {
+      const xmpRes = await xmpaymentCheckStatus(cfg, transactionId);
+      if (xmpRes.isPaid) {
+        isPaid = true;
+      } else if (xmpRes.status === "cancelled" || xmpRes.status === "cancel") {
+        cancelled = true;
+      }
+    }
+
+    // 2. Check ArexansPay if not yet paid and has mapping
+    if (!isPaid && gatewayTxId) {
       const status = await arexansCheckStatus(cfg, gatewayTxId);
       if (PAID_STATUSES.includes(status)) isPaid = true;
       if (status === "cancel" || status === "cancelled" || status === "canceled") cancelled = true;
-    } else if (cfg.pakasir.mode === "live" && cfg.pakasir.configured) {
+    }
+
+    // 3. Fallback to Pakasir if configured
+    if (!isPaid && cfg.pakasir.mode === "live" && cfg.pakasir.configured) {
       isPaid = await pakasirIsPaid(cfg, transactionId, [transaction.original_amount, transaction.total_amount]);
     }
 
     if (cfg.simulation) isPaid = true;
 
-    // Demo/sandbox auto-pay after 5s (Pakasir sandbox only)
-    if (!gatewayTxId && (cfg.pakasir.mode === "sandbox" || cfg.pakasir.mode === "demo")) {
+    // Demo/sandbox auto-pay after 5s
+    if (!isPaid && !gatewayTxId && (cfg.xmpayment.mode === "sandbox" || cfg.pakasir.mode === "sandbox" || cfg.pakasir.mode === "demo")) {
       const elapsed = Date.now() - new Date(transaction.created_at).getTime();
       if (elapsed > 5000) isPaid = true;
     }

@@ -39,7 +39,17 @@ export const PaymentGatewaySettings: FC<PaymentGatewaySettingsProps> = ({ onSett
     error?: string;
   } | null>(null);
 
-  // Pakasir Test Status
+  // XMPayment Test & Balance Status
+  const [xmpTesting, setXmpTesting] = useState(false);
+  const [xmpStatus, setXmpStatus] = useState<{
+    tested: boolean;
+    valid: boolean;
+    balanceData?: any;
+    message?: string;
+    error?: string;
+  } | null>(null);
+
+  // Pakasir Test Status (Legacy fallback)
   const [pakasirTesting, setPakasirTesting] = useState(false);
   const [pakasirStatus, setPakasirStatus] = useState<{
     tested: boolean;
@@ -199,7 +209,69 @@ export const PaymentGatewaySettings: FC<PaymentGatewaySettingsProps> = ({ onSett
     }
   };
 
-  // Test Pakasir Credentials
+  // Test XMPayment Connection & Fetch Live Balance (https://xmpayment.my.id/api/v1/balance)
+  const testXMPaymentConnection = async () => {
+    const apiKey = getValue('xmpayment_api_key', 'xmp_live_d2b8ea709d5d7a57ff974cd771435e0f58d4da888593350b');
+    if (!apiKey) {
+      toast({
+        title: 'API Key XMPayment Kosong',
+        description: 'Silakan isi API Key XMPayment terlebih dahulu.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setXmpTesting(true);
+    setXmpStatus(null);
+    try {
+      let res: Response;
+      try {
+        res = await fetch('https://xmpayment.my.id/api/v1/balance', {
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'x-api-key': apiKey,
+          },
+        });
+      } catch {
+        res = await fetch('/xmpayment-proxy/api/v1/balance', {
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'x-api-key': apiKey,
+          },
+        });
+      }
+
+      const data = await res.json().catch(() => ({}));
+      console.log('XMPayment balance response:', data);
+
+      if (res.ok && data.success && data.data) {
+        const bal = data.data;
+        const store = bal.store_name || bal.merchant_id || 'Toko XMPayment';
+        const formatted = bal.available_balance_formatted || `Rp ${(bal.available_balance || 0).toLocaleString('id-ID')}`;
+        setXmpStatus({
+          tested: true,
+          valid: true,
+          balanceData: bal,
+          message: `Terhubung ke Toko: "${store}". Saldo Tersedia: ${formatted}`,
+        });
+        toast({
+          title: 'Koneksi XMPayment Berhasil',
+          description: `Toko: "${store}" aktif. Saldo: ${formatted}`,
+        });
+      } else {
+        const errMsg = data.message || data.error?.message || `Gagal mengambil saldo (HTTP ${res.status})`;
+        setXmpStatus({ tested: true, valid: false, error: errMsg });
+        toast({ title: 'Koneksi XMPayment Gagal', description: errMsg, variant: 'destructive' });
+      }
+    } catch (err: any) {
+      setXmpStatus({ tested: true, valid: false, error: err.message || 'Gagal menghubungi server XMPayment' });
+      toast({ title: 'Error Koneksi XMPayment', description: err.message || 'Gagal menghubungi server XMPayment', variant: 'destructive' });
+    } finally {
+      setXmpTesting(false);
+    }
+  };
+
+  // Test Pakasir Credentials (Legacy fallback)
   const testPakasirConnection = async () => {
     const slug = getValue('pakasir_slug');
     const apiKey = getValue('pakasir_api_key');
@@ -215,7 +287,6 @@ export const PaymentGatewaySettings: FC<PaymentGatewaySettingsProps> = ({ onSett
     setPakasirTesting(true);
     setPakasirStatus(null);
     try {
-      // Test via check transaction endpoint with dummy parameters to verify API Key & Project
       const query = `project=${encodeURIComponent(slug)}&amount=10000&order_id=TEST_CONNECTION_PING&api_key=${encodeURIComponent(apiKey)}`;
       let res: Response;
       try {
@@ -224,9 +295,6 @@ export const PaymentGatewaySettings: FC<PaymentGatewaySettingsProps> = ({ onSett
         res = await fetch(`/pakasir-proxy/api/transactiondetail?${query}`);
       }
       const data = await res.json();
-      console.log('Pakasir test response:', data);
-
-      // Pakasir returns 200 or json with transaction not found (which means credentials are valid!)
       if (data && (data.transaction !== undefined || data.status !== undefined || !data.error?.includes('Unauthorized'))) {
         setPakasirStatus({
           tested: true,
@@ -239,28 +307,11 @@ export const PaymentGatewaySettings: FC<PaymentGatewaySettingsProps> = ({ onSett
         });
       } else {
         const errMsg = data.error || data.message || 'API Key atau Project Slug tidak valid.';
-        setPakasirStatus({
-          tested: true,
-          valid: false,
-          error: errMsg
-        });
-        toast({
-          title: 'Koneksi Pakasir Gagal',
-          description: errMsg,
-          variant: 'destructive'
-        });
+        setPakasirStatus({ tested: true, valid: false, error: errMsg });
+        toast({ title: 'Koneksi Pakasir Gagal', description: errMsg, variant: 'destructive' });
       }
     } catch (err: any) {
-      // Even if transaction doesn't exist, response reaching server is good
-      setPakasirStatus({
-        tested: true,
-        valid: true,
-        message: 'Kredensial tersimpan dan format valid.'
-      });
-      toast({
-        title: 'Info Koneksi Pakasir',
-        description: 'Format kredensial terverifikasi.',
-      });
+      setPakasirStatus({ tested: true, valid: true, message: 'Kredensial tersimpan dan format valid.' });
     } finally {
       setPakasirTesting(false);
     }
@@ -316,18 +367,18 @@ export const PaymentGatewaySettings: FC<PaymentGatewaySettingsProps> = ({ onSett
   const webhookUrl = supabaseUrl ? `${supabaseUrl}/functions/v1/payment-webhook` : `${currentOrigin}/api/payment-webhook`;
 
   // Resolved values
-  const rawGateway = getValue('payment_gateway', 'arexanspay');
-  const currentGateway = (rawGateway === 'casaku' || rawGateway === 'cashify') ? 'arexanspay' : rawGateway;
+  const rawGateway = getValue('payment_gateway', 'xmpayment');
+  const currentGateway = (rawGateway === 'casaku' || rawGateway === 'cashify') ? 'arexanspay' : (rawGateway === 'pakasir' ? 'xmpayment' : rawGateway);
   const isSimulationOn = getValue('payment_simulation') === 'on';
-  const pakasirMode = getValue('pakasir_mode', 'live');
 
   const arexanspayLicense = getValue('arexanspay_api_key') || getValue('casaku_license_key');
   const arexanspayQris = getValue('arexanspay_qris_id') || getValue('casaku_qris_id');
   const arexanspayWebhook = getValue('arexanspay_webhook_key') || getValue('casaku_webhook_key');
   const arexanspayNumberId = getValue('arexanspay_number_id');
 
-  const pakasirSlug = getValue('pakasir_slug');
-  const pakasirApiKey = getValue('pakasir_api_key');
+  const xmpApiKey = getValue('xmpayment_api_key', 'xmp_live_d2b8ea709d5d7a57ff974cd771435e0f58d4da888593350b');
+  const xmpWebhookSecret = getValue('xmpayment_webhook_secret', 'whsec_bYGhuiJpREZP4N5zB0bCMOP6LrDAQ3wsOJzOThgNZKY');
+  const xmpMode = getValue('xmpayment_mode', 'live');
 
   if (loading) {
     return (
@@ -361,9 +412,9 @@ export const PaymentGatewaySettings: FC<PaymentGatewaySettingsProps> = ({ onSett
                   ? 'bg-purple-500/15 text-purple-400 border border-purple-500/30'
                   : currentGateway === 'arexanspay'
                   ? 'bg-cyan-500/15 text-cyan-400 border border-cyan-500/30'
-                  : 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                  : 'bg-indigo-500/15 text-indigo-400 border border-indigo-500/30'
               }`}>
-                {currentGateway === 'arexanspay' ? 'ArexansPay Aktif' : currentGateway === 'pakasir' ? 'Pakasir Aktif' : 'Dual Gateway Aktif'}
+                {currentGateway === 'xmpayment' ? 'XMPayment Aktif' : currentGateway === 'arexanspay' ? 'ArexansPay Aktif' : 'Dual Gateway Aktif'}
               </span>
             </div>
           </div>
@@ -375,6 +426,29 @@ export const PaymentGatewaySettings: FC<PaymentGatewaySettingsProps> = ({ onSett
               Pilihan Gateway Pembayaran
             </Label>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <button
+                type="button"
+                onClick={() => saveSetting('payment_gateway', 'xmpayment')}
+                className={`p-4 rounded-xl border text-left transition-all duration-200 flex flex-col justify-between relative ${
+                  currentGateway === 'xmpayment'
+                    ? 'border-indigo-500 bg-indigo-500/10 text-foreground ring-1 ring-indigo-500 shadow-md'
+                    : 'border-border/60 bg-muted/30 hover:border-indigo-500/40 text-muted-foreground'
+                }`}
+              >
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="font-bold text-sm text-foreground">XMPayment (Utama)</span>
+                    <Radio className={`w-4 h-4 ${currentGateway === 'xmpayment' ? 'text-indigo-400' : 'text-muted-foreground/40'}`} />
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    QRIS Otomatis & Cek Saldo Realtime via API xmpayment.my.id.
+                  </p>
+                </div>
+                <div className="mt-3 flex items-center gap-1.5 text-[11px] text-indigo-400">
+                  <ExternalLink className="w-3 h-3" /> https://xmpayment.my.id/dashboard/docs
+                </div>
+              </button>
+
               <button
                 type="button"
                 onClick={() => saveSetting('payment_gateway', 'arexanspay')}
@@ -400,29 +474,6 @@ export const PaymentGatewaySettings: FC<PaymentGatewaySettingsProps> = ({ onSett
 
               <button
                 type="button"
-                onClick={() => saveSetting('payment_gateway', 'pakasir')}
-                className={`p-4 rounded-xl border text-left transition-all duration-200 flex flex-col justify-between relative ${
-                  currentGateway === 'pakasir'
-                    ? 'border-emerald-500 bg-emerald-500/10 text-foreground ring-1 ring-emerald-500 shadow-md'
-                    : 'border-border/60 bg-muted/30 hover:border-emerald-500/40 text-muted-foreground'
-                }`}
-              >
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="font-bold text-sm text-foreground">Pakasir.com</span>
-                    <Radio className={`w-4 h-4 ${currentGateway === 'pakasir' ? 'text-emerald-400' : 'text-muted-foreground/40'}`} />
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    QRIS Instant melalui project slug & API key app.pakasir.com.
-                  </p>
-                </div>
-                <div className="mt-3 flex items-center gap-1.5 text-[11px] text-emerald-400">
-                  <ExternalLink className="w-3 h-3" /> https://pakasir.com/p/docs
-                </div>
-              </button>
-
-              <button
-                type="button"
                 onClick={() => saveSetting('payment_gateway', 'both')}
                 className={`p-4 rounded-xl border text-left transition-all duration-200 flex flex-col justify-between relative ${
                   currentGateway === 'both'
@@ -436,7 +487,7 @@ export const PaymentGatewaySettings: FC<PaymentGatewaySettingsProps> = ({ onSett
                     <Radio className={`w-4 h-4 ${currentGateway === 'both' ? 'text-purple-400' : 'text-muted-foreground/40'}`} />
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    Pelanggan dapat memilih antara ArexansPay (QRIS 1) atau Pakasir (QRIS 2).
+                    Pelanggan dapat memilih antara XMPayment atau ArexansPay.
                   </p>
                 </div>
                 <div className="mt-3 text-[11px] text-purple-400">
@@ -711,28 +762,28 @@ export const PaymentGatewaySettings: FC<PaymentGatewaySettingsProps> = ({ onSett
         </CardContent>
       </Card>
 
-      {/* 3. Pakasir Integration Card (https://pakasir.com/p/docs) */}
-      <Card className="glass-card border-emerald-500/20 bg-background/60 shadow-lg relative overflow-hidden">
-        <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-emerald-500 via-teal-400 to-green-500" />
+      {/* 3. XMPayment Integration Card (https://xmpayment.my.id/dashboard/docs) */}
+      <Card className="glass-card border-indigo-500/20 bg-background/60 shadow-lg relative overflow-hidden">
+        <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-blue-500 via-indigo-500 to-purple-500" />
         <CardHeader className="pb-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
               <div className="flex items-center gap-2">
                 <CardTitle className="text-lg font-display font-bold text-foreground">
-                  Integrasi Pakasir.com (QRIS 2)
+                  Integrasi XMPayment Gateway (QRIS Otomatis)
                 </CardTitle>
                 <a
-                  href="https://pakasir.com/p/docs"
+                  href="https://xmpayment.my.id/dashboard/docs"
                   target="_blank"
                   rel="noreferrer"
-                  className="text-xs text-emerald-400 hover:underline flex items-center gap-1 bg-emerald-500/10 px-2 py-0.5 rounded-full"
+                  className="text-xs text-indigo-400 hover:underline flex items-center gap-1 bg-indigo-500/10 px-2 py-0.5 rounded-full"
                 >
                   <span>Docs</span>
                   <ExternalLink className="w-3 h-3" />
                 </a>
               </div>
               <CardDescription className="text-xs mt-1">
-                Kredensial dari dashboard https://app.pakasir.com untuk generate QRIS instan dan verifikasi transaksi.
+                Kredensial resmi dari https://xmpayment.my.id untuk generate invoice QRIS ber-kode unik, webhook callback, dan penarikan saldo DANA.
               </CardDescription>
             </div>
 
@@ -740,156 +791,189 @@ export const PaymentGatewaySettings: FC<PaymentGatewaySettingsProps> = ({ onSett
               type="button"
               variant="outline"
               size="sm"
-              onClick={testPakasirConnection}
-              disabled={pakasirTesting}
-              className="border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/10 shrink-0 gap-1.5"
+              onClick={testXMPaymentConnection}
+              disabled={xmpTesting}
+              className="border-indigo-500/40 text-indigo-400 hover:bg-indigo-500/10 shrink-0 gap-1.5"
             >
-              <RefreshCw className={`w-3.5 h-3.5 ${pakasirTesting ? 'animate-spin' : ''}`} />
-              {pakasirTesting ? 'Mengecek...' : 'Test Kredensial Pakasir'}
+              <RefreshCw className={`w-3.5 h-3.5 ${xmpTesting ? 'animate-spin' : ''}`} />
+              {xmpTesting ? 'Mengecek...' : 'Cek Saldo & Test XMPayment'}
             </Button>
           </div>
 
-          {/* Test Status Banner */}
-          {pakasirStatus && (
-            <div className={`mt-3 p-3 rounded-lg text-xs flex items-center gap-2 ${
-              pakasirStatus.valid 
-                ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' 
+          {/* Test Status Banner / Saldo Widget */}
+          {xmpStatus && (
+            <div className={`mt-3 p-3 rounded-xl text-xs ${
+              xmpStatus.valid 
+                ? 'bg-indigo-500/10 text-indigo-300 border border-indigo-500/30' 
                 : 'bg-destructive/10 text-destructive border border-destructive/30'
             }`}>
-              {pakasirStatus.valid ? (
-                <CheckCircle2 className="w-4 h-4 shrink-0" />
-              ) : (
-                <AlertTriangle className="w-4 h-4 shrink-0" />
+              <div className="flex items-center gap-2 mb-2 font-medium">
+                {xmpStatus.valid ? (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                ) : (
+                  <AlertTriangle className="w-4 h-4 shrink-0" />
+                )}
+                <span>{xmpStatus.message || xmpStatus.error}</span>
+              </div>
+
+              {xmpStatus.valid && xmpStatus.balanceData && (
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2 border-t border-indigo-500/20 text-[11px]">
+                  <div className="p-2 rounded bg-black/40">
+                    <span className="text-muted-foreground block text-[10px]">Saldo Tersedia</span>
+                    <span className="font-bold font-mono text-emerald-400">{xmpStatus.balanceData.available_balance_formatted || `Rp ${xmpStatus.balanceData.available_balance?.toLocaleString('id-ID')}`}</span>
+                  </div>
+                  <div className="p-2 rounded bg-black/40">
+                    <span className="text-muted-foreground block text-[10px]">Saldo Diproses (T+1)</span>
+                    <span className="font-bold font-mono text-amber-300">{xmpStatus.balanceData.processing_balance_formatted || `Rp ${xmpStatus.balanceData.processing_balance?.toLocaleString('id-ID')}`}</span>
+                  </div>
+                  <div className="p-2 rounded bg-black/40">
+                    <span className="text-muted-foreground block text-[10px]">Sedang Dicairkan</span>
+                    <span className="font-bold font-mono text-blue-300">{xmpStatus.balanceData.withdrawing_balance_formatted || `Rp ${xmpStatus.balanceData.withdrawing_balance?.toLocaleString('id-ID')}`}</span>
+                  </div>
+                  <div className="p-2 rounded bg-black/40">
+                    <span className="text-muted-foreground block text-[10px]">Total Saldo</span>
+                    <span className="font-bold font-mono text-white">{xmpStatus.balanceData.total_balance_formatted || `Rp ${xmpStatus.balanceData.total_balance?.toLocaleString('id-ID')}`}</span>
+                  </div>
+                </div>
               )}
-              <span>{pakasirStatus.valid ? `Sukses: ${pakasirStatus.message}` : `Error: ${pakasirStatus.error}`}</span>
             </div>
           )}
         </CardHeader>
 
         <CardContent className="space-y-4">
-          {/* Project Slug */}
-          <div className="space-y-1.5">
-            <Label htmlFor="pakasir_slug" className="text-xs font-semibold text-foreground flex items-center gap-1.5">
-              <CreditCard className="w-3.5 h-3.5 text-emerald-400" />
-              Project Slug / Nama Project <span className="text-destructive">*</span>
-            </Label>
-            <div className="flex gap-2">
-              <Input
-                id="pakasir_slug"
-                type="text"
-                value={pakasirSlug}
-                onChange={(e) => handleInputChange('pakasir_slug', e.target.value)}
-                placeholder="Contoh: arexans-tools atau project-slug-anda"
-                className="bg-muted/40 font-mono text-xs focus:border-emerald-500"
-              />
-              <Button
-                type="button"
-                size="sm"
-                onClick={() => saveSetting('pakasir_slug', pakasirSlug)}
-                disabled={savingKey === 'pakasir_slug'}
-                className="bg-emerald-600 hover:bg-emerald-500 text-white shrink-0 gap-1"
-              >
-                <Save className="w-3.5 h-3.5" /> Simpan
-              </Button>
-            </div>
-            <p className="text-[11px] text-muted-foreground">
-              Slug nama project yang dibuat pada dashboard app.pakasir.com.
-            </p>
-          </div>
-
           {/* API Key */}
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
-              <Label htmlFor="pakasir_api_key" className="text-xs font-semibold text-foreground flex items-center gap-1.5">
-                <Shield className="w-3.5 h-3.5 text-emerald-400" />
-                API Key Pakasir <span className="text-destructive">*</span>
+              <Label htmlFor="xmpayment_api_key" className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                <Shield className="w-3.5 h-3.5 text-indigo-400" />
+                API Key XMPayment <span className="text-destructive">*</span>
               </Label>
               <button
                 type="button"
-                onClick={() => setShowSecrets(p => ({ ...p, pakasir_key: !p.pakasir_key }))}
+                onClick={() => setShowSecrets(p => ({ ...p, xmp_key: !p.xmp_key }))}
                 className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
               >
-                {showSecrets.pakasir_key ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                {showSecrets.pakasir_key ? 'Sembunyikan' : 'Tampilkan'}
+                {showSecrets.xmp_key ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                {showSecrets.xmp_key ? 'Sembunyikan' : 'Tampilkan'}
               </button>
             </div>
             <div className="flex gap-2">
               <Input
-                id="pakasir_api_key"
-                type={showSecrets.pakasir_key ? 'text' : 'password'}
-                value={pakasirApiKey}
-                onChange={(e) => handleInputChange('pakasir_api_key', e.target.value)}
-                placeholder="Masukkan API Key project Pakasir"
-                className="bg-muted/40 font-mono text-xs focus:border-emerald-500"
+                id="xmpayment_api_key"
+                type={showSecrets.xmp_key ? 'text' : 'password'}
+                value={xmpApiKey}
+                onChange={(e) => handleInputChange('xmpayment_api_key', e.target.value)}
+                placeholder="xmp_live_..."
+                className="bg-muted/40 font-mono text-xs focus:border-indigo-500"
               />
               <Button
                 type="button"
                 size="sm"
-                onClick={() => saveSetting('pakasir_api_key', pakasirApiKey)}
-                disabled={savingKey === 'pakasir_api_key'}
-                className="bg-emerald-600 hover:bg-emerald-500 text-white shrink-0 gap-1"
+                onClick={() => saveSetting('xmpayment_api_key', xmpApiKey)}
+                disabled={savingKey === 'xmpayment_api_key'}
+                className="bg-indigo-600 hover:bg-indigo-500 text-white shrink-0 gap-1"
               >
                 <Save className="w-3.5 h-3.5" /> Simpan
               </Button>
             </div>
             <p className="text-[11px] text-muted-foreground">
-              API Key unik dari project Pakasir untuk otorisasi create & detail transaksi.
+              API Key Live / Sandbox yang terdaftar di akun XMPayment Anda (contoh: <code>xmp_live_...</code>).
             </p>
           </div>
 
-          {/* Pakasir Mode (Live / Demo) */}
+          {/* Webhook Secret */}
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <Label htmlFor="xmpayment_webhook_secret" className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                <Shield className="w-3.5 h-3.5 text-indigo-400" />
+                Webhook Secret (HMAC Signing Secret) <span className="text-destructive">*</span>
+              </Label>
+              <button
+                type="button"
+                onClick={() => setShowSecrets(p => ({ ...p, xmp_whsec: !p.xmp_whsec }))}
+                className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
+              >
+                {showSecrets.xmp_whsec ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                {showSecrets.xmp_whsec ? 'Sembunyikan' : 'Tampilkan'}
+              </button>
+            </div>
+            <div className="flex gap-2">
+              <Input
+                id="xmpayment_webhook_secret"
+                type={showSecrets.xmp_whsec ? 'text' : 'password'}
+                value={xmpWebhookSecret}
+                onChange={(e) => handleInputChange('xmpayment_webhook_secret', e.target.value)}
+                placeholder="whsec_..."
+                className="bg-muted/40 font-mono text-xs focus:border-indigo-500"
+              />
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => saveSetting('xmpayment_webhook_secret', xmpWebhookSecret)}
+                disabled={savingKey === 'xmpayment_webhook_secret'}
+                className="bg-indigo-600 hover:bg-indigo-500 text-white shrink-0 gap-1"
+              >
+                <Save className="w-3.5 h-3.5" /> Simpan
+              </Button>
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              Signing Secret untuk memverifikasi header <code>x-xmp-signature</code> (HMAC-SHA256) pada callback webhook.
+            </p>
+          </div>
+
+          {/* Mode (Live / Sandbox) */}
           <div className="p-3 rounded-lg bg-muted/30 border border-border/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
-              <Label className="text-xs font-semibold text-foreground">Mode Transaksi Pakasir</Label>
+              <Label className="text-xs font-semibold text-foreground">Mode Transaksi XMPayment</Label>
               <p className="text-[11px] text-muted-foreground">
-                Gunakan Live Mode untuk QRIS resmi, atau Sandbox/Demo untuk pengujian tanpa QRIS asli.
+                Gunakan Live Mode untuk QRIS resmi ber-kode unik, atau Sandbox untuk simulasi.
               </p>
             </div>
             <div className="flex gap-2">
               <Button
                 type="button"
                 size="sm"
-                variant={pakasirMode === 'live' ? 'default' : 'outline'}
-                onClick={() => saveSetting('pakasir_mode', 'live')}
-                className={pakasirMode === 'live' ? 'bg-emerald-600 hover:bg-emerald-500 text-white' : ''}
+                variant={xmpMode === 'live' ? 'default' : 'outline'}
+                onClick={() => saveSetting('xmpayment_mode', 'live')}
+                className={xmpMode === 'live' ? 'bg-indigo-600 hover:bg-indigo-500 text-white' : ''}
               >
                 Live Mode
               </Button>
               <Button
                 type="button"
                 size="sm"
-                variant={pakasirMode === 'demo' || pakasirMode === 'sandbox' ? 'default' : 'outline'}
-                onClick={() => saveSetting('pakasir_mode', 'demo')}
-                className={pakasirMode === 'demo' || pakasirMode === 'sandbox' ? 'bg-amber-600 hover:bg-amber-500 text-white' : ''}
+                variant={xmpMode === 'sandbox' ? 'default' : 'outline'}
+                onClick={() => saveSetting('xmpayment_mode', 'sandbox')}
+                className={xmpMode === 'sandbox' ? 'bg-amber-600 hover:bg-amber-500 text-white' : ''}
               >
-                Demo / Sandbox
+                Sandbox
               </Button>
             </div>
           </div>
 
-          {/* Pakasir Webhook URL Helper */}
-          <div className="p-3 rounded-lg bg-emerald-500/5 border border-emerald-500/20">
+          {/* XMPayment Webhook URL Helper */}
+          <div className="p-3 rounded-lg bg-indigo-500/5 border border-indigo-500/20">
             <div className="flex items-center justify-between mb-1.5">
-              <span className="text-xs font-semibold text-emerald-400 flex items-center gap-1">
+              <span className="text-xs font-semibold text-indigo-400 flex items-center gap-1">
                 <ExternalLink className="w-3.5 h-3.5" />
-                URL Webhook untuk Pakasir Dashboard
+                URL Webhook untuk Dashboard XMPayment
               </span>
               <Button
                 type="button"
                 variant="ghost"
                 size="sm"
-                onClick={() => copyToClipboard(webhookUrl, 'pakasir_webhook')}
-                className="h-7 px-2 text-xs text-emerald-400 hover:bg-emerald-500/10 gap-1"
+                onClick={() => copyToClipboard(webhookUrl, 'xmpayment_webhook')}
+                className="h-7 px-2 text-xs text-indigo-400 hover:bg-indigo-500/10 gap-1"
               >
-                {copiedKey === 'pakasir_webhook' ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                {copiedKey === 'pakasir_webhook' ? 'Tersalin' : 'Salin URL'}
+                {copiedKey === 'xmpayment_webhook' ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                {copiedKey === 'xmpayment_webhook' ? 'Tersalin' : 'Salin URL'}
               </Button>
             </div>
-            <div className="p-2 rounded bg-background/80 font-mono text-[11px] text-foreground break-all border border-emerald-500/20">
+            <div className="p-2 rounded bg-background/80 font-mono text-[11px] text-foreground break-all border border-indigo-500/20">
               {webhookUrl}
             </div>
             <p className="text-[10px] text-muted-foreground mt-1.5">
-              Pasang URL webhook di atas pada project Pakasir Anda untuk menerima status <code>completed</code> secara instan.
+              Daftarkan URL ini di dashboard <strong>XMPayment &gt; Developers &gt; Webhook URL</strong>. Server akan otomatis memproses pelunasan invoice saat pelanggan membayar QRIS.
             </p>
           </div>
         </CardContent>

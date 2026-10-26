@@ -2,7 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import {
   corsHeaders, jsonHeaders, loadPaymentConfig,
-  arexansCheckStatus, clearGatewayTxId, getGatewayTxId, pakasirIsPaid,
+  arexansCheckStatus, clearGatewayTxId, getGatewayTxId, xmpaymentCheckStatus, pakasirIsPaid,
   sendDiscordNotification,
 } from "../_shared/payment.ts";
 
@@ -40,19 +40,26 @@ serve(async (req) => {
     if (cfg.simulation) {
       isPaid = true;
     } else {
+      // 1. Check XMPayment
+      if (cfg.xmpayment.configured) {
+        const xmpRes = await xmpaymentCheckStatus(cfg, transactionId);
+        if (xmpRes.isPaid) isPaid = true;
+      }
+
+      // 2. Check ArexansPay
       const gatewayTxId = await getGatewayTxId(supabase, transactionId);
-      if (gatewayTxId && cfg.arexanspay.configured) {
-        const result = await arexansCheckStatus(cfg, gatewayTxId);
-        if (result.expired) {
-          await supabase.from("transactions").update({ status: "expired" }).eq("id", tx.id);
+      if (!isPaid && gatewayTxId && cfg.arexanspay.configured) {
+        const st = await arexansCheckStatus(cfg, gatewayTxId);
+        if (st === "cancel" || st === "cancelled") {
+          await supabase.from("transactions").update({ status: "cancelled" }).eq("id", tx.id);
           await clearGatewayTxId(supabase, transactionId);
-          return new Response(JSON.stringify({ expired: true }), { status: 200, headers: jsonHeaders });
+          return new Response(JSON.stringify({ cancelled: true }), { status: 200, headers: jsonHeaders });
         }
-        if (result.paid) isPaid = true;
-      } else if (cfg.pakasir.configured && cfg.pakasir.mode === "live") {
-        const result = await pakasirIsPaid(cfg, transactionId, tx.total_amount || tx.original_amount);
-        if (result.paid) isPaid = true;
-      } else if (cfg.pakasir.mode === "demo" || cfg.pakasir.mode === "sandbox") {
+        if (["paid", "success", "completed", "settled"].includes(st)) isPaid = true;
+      } else if (!isPaid && cfg.pakasir.configured && cfg.pakasir.mode === "live") {
+        const pkPaid = await pakasirIsPaid(cfg, transactionId, [tx.total_amount, tx.original_amount]);
+        if (pkPaid) isPaid = true;
+      } else if (!isPaid && (cfg.xmpayment.mode === "sandbox" || cfg.pakasir.mode === "demo" || cfg.pakasir.mode === "sandbox")) {
         if (Date.now() - new Date(tx.created_at).getTime() > 5000) isPaid = true;
       }
     }

@@ -7,6 +7,7 @@ import { Link as LinkIcon, Key, Coins, History, Search, Bell, Shield, ShoppingBa
 import { Button } from '@/components/ui/button';
 import { TokoScriptCatalog } from './TokoScriptCatalog';
 import { getMaintenanceState, isDeveloperTesting, MaintenanceState, DEFAULT_MAINTENANCE_STATE } from '@/lib/maintenanceStore';
+import { getTokoScriptHomeVisibility } from '@/lib/tokoScriptStore';
 import { toast } from '@/hooks/use-toast';
 
 interface Ad {
@@ -46,7 +47,6 @@ interface PackageSelectionProps {
   ads: Ad[];
   packages?: Package[];
   defaultTab?: 'tools' | 'toko';
-  resellerCode?: string | null;
   onTokoScriptOrderQris?: (data: {
     transactionId: string;
     qr_string: string;
@@ -108,10 +108,10 @@ const PackageSelection: FC<PackageSelectionProps> = ({
   ads,
   packages,
   defaultTab,
-  resellerCode,
   onTokoScriptOrderQris,
 }) => {
   const navigate = useNavigate();
+  const [showTokoScriptOnHome, setShowTokoScriptOnHome] = useState(false);
   const [activeMainTab, setActiveMainTab] = useState<'tools' | 'toko'>(defaultTab || 'tools');
   const [socialLinks, setSocialLinks] = useState<SocialLink[]>([]);
   const [xcoinsEnabled, setXcoinsEnabled] = useState(false);
@@ -126,24 +126,42 @@ const PackageSelection: FC<PackageSelectionProps> = ({
       getMaintenanceState().then(setMaintenanceState);
     };
 
+    const updateVisibility = () => {
+      getTokoScriptHomeVisibility().then((visible) => {
+        setShowTokoScriptOnHome(visible);
+        if (!visible) {
+          setActiveMainTab('tools');
+        }
+      });
+    };
+
     updateState();
+    updateVisibility();
 
     window.addEventListener('maintenance_state_changed', updateState);
     window.addEventListener('dev_testing_bypass_changed', updateState);
+    window.addEventListener('toko_script_visibility_changed', updateVisibility);
     window.addEventListener('storage', updateState);
+    window.addEventListener('storage', updateVisibility);
 
     return () => {
       window.removeEventListener('maintenance_state_changed', updateState);
       window.removeEventListener('dev_testing_bypass_changed', updateState);
+      window.removeEventListener('toko_script_visibility_changed', updateVisibility);
       window.removeEventListener('storage', updateState);
+      window.removeEventListener('storage', updateVisibility);
     };
   }, []);
 
   useEffect(() => {
     if (defaultTab) {
-      setActiveMainTab(defaultTab);
+      if (defaultTab === 'toko' && !showTokoScriptOnHome) {
+        setActiveMainTab('tools');
+      } else {
+        setActiveMainTab(defaultTab);
+      }
     }
-  }, [defaultTab]);
+  }, [defaultTab, showTokoScriptOnHome]);
 
   useEffect(() => {
     const fetchSocialLinks = async () => {
@@ -267,44 +285,45 @@ const PackageSelection: FC<PackageSelectionProps> = ({
           </div>
         </div>
 
-        {/* 2 PRIMARY TABS SWITCHER: Arexans Tools & Toko Script */}
-        <div className="flex justify-center mb-6 md:mb-8">
-          <div className="inline-flex p-1.5 rounded-2xl bg-card/90 border border-primary/25 backdrop-blur-xl shadow-2xl gap-1.5">
-            <button
-              type="button"
-              onClick={() => setActiveMainTab('tools')}
-              className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-bold text-xs md:text-sm transition-all duration-300 ${
-                activeMainTab === 'tools'
-                  ? 'bg-gradient-to-r from-blue-600 via-primary to-cyan-500 text-white shadow-lg shadow-cyan-500/30 scale-[1.02]'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-muted/40'
-              }`}
-            >
-              <Shield className="w-4 h-4" />
-              <span>Arexans Tools</span>
-            </button>
+        {/* 2 PRIMARY TABS SWITCHER: Arexans Tools & Toko Script (Hanya tampil jika Toko Script aktif di halaman awal) */}
+        {showTokoScriptOnHome && (
+          <div className="flex justify-center mb-6 md:mb-8">
+            <div className="inline-flex p-1.5 rounded-2xl bg-card/90 border border-primary/25 backdrop-blur-xl shadow-2xl gap-1.5">
+              <button
+                type="button"
+                onClick={() => setActiveMainTab('tools')}
+                className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-bold text-xs md:text-sm transition-all duration-300 ${
+                  activeMainTab === 'tools'
+                    ? 'bg-gradient-to-r from-blue-600 via-primary to-cyan-500 text-white shadow-lg shadow-cyan-500/30 scale-[1.02]'
+                    : 'text-muted-foreground hover:text-foreground hover:bg-muted/40'
+                }`}
+              >
+                <Shield className="w-4 h-4" />
+                <span>Arexans Tools</span>
+              </button>
 
-            <button
-              type="button"
-              onClick={() => setActiveMainTab('toko')}
-              className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-bold text-xs md:text-sm transition-all duration-300 ${
-                activeMainTab === 'toko'
-                  ? 'bg-gradient-to-r from-purple-600 via-pink-600 to-rose-500 text-white shadow-lg shadow-purple-500/30 scale-[1.02]'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-muted/40'
-              }`}
-            >
-              <ShoppingBag className="w-4 h-4" />
-              <span>Toko Script</span>
-              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-white/20 font-mono">
-                Baru
-              </span>
-            </button>
+              <button
+                type="button"
+                onClick={() => setActiveMainTab('toko')}
+                className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-bold text-xs md:text-sm transition-all duration-300 ${
+                  activeMainTab === 'toko'
+                    ? 'bg-gradient-to-r from-purple-600 via-pink-600 to-rose-500 text-white shadow-lg shadow-purple-500/30 scale-[1.02]'
+                    : 'text-muted-foreground hover:text-foreground hover:bg-muted/40'
+                }`}
+              >
+                <ShoppingBag className="w-4 h-4" />
+                <span>Toko Script</span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-white/20 font-mono">
+                  Baru
+                </span>
+              </button>
+            </div>
           </div>
-        </div>
+        )}
 
-        {activeMainTab === 'toko' ? (
+        {showTokoScriptOnHome && activeMainTab === 'toko' ? (
           <div className="mb-8">
             <TokoScriptCatalog
-              resellerCode={resellerCode}
               onOpenQris={(data) => {
                 if (onTokoScriptOrderQris) {
                   onTokoScriptOrderQris(data);

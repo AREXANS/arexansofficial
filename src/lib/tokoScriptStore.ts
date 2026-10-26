@@ -14,6 +14,59 @@ const STORAGE_SALES_KEY = 'arexans_reseller_sales_v2';
 const STORAGE_WITHDRAWALS_KEY = 'arexans_reseller_withdrawals_v2';
 const STORAGE_GLOBAL_SETTINGS_KEY = 'arexans_reseller_global_settings_v2';
 const CURRENT_RESELLER_KEY = 'arexans_current_reseller_session_v2';
+const STORAGE_SHOW_ON_HOME_KEY = 'arexans_show_toko_script_on_home';
+
+/**
+ * Cek apakah Toko Script ditampilkan di halaman awal (home).
+ * Default: false (hanya tampil Arexans Tools saja, sesuai permintaan).
+ */
+export const getTokoScriptHomeVisibility = async (): Promise<boolean> => {
+  try {
+    const cached = typeof localStorage !== 'undefined' ? localStorage.getItem(STORAGE_SHOW_ON_HOME_KEY) : null;
+    const { data } = await supabase
+      .from('app_settings')
+      .select('value')
+      .eq('key', 'show_toko_script_on_home')
+      .maybeSingle();
+
+    if (data && data.value !== null && data.value !== undefined) {
+      const isVisible = data.value === 'true' || data.value === '1' || data.value === 'on';
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem(STORAGE_SHOW_ON_HOME_KEY, isVisible ? 'true' : 'false');
+      }
+      return isVisible;
+    }
+
+    if (cached !== null) {
+      return cached === 'true';
+    }
+
+    // Default: false (agar halaman awal hanya menampilkan Arexans Tools)
+    return false;
+  } catch (err) {
+    const cached = typeof localStorage !== 'undefined' ? localStorage.getItem(STORAGE_SHOW_ON_HOME_KEY) : null;
+    return cached === 'true';
+  }
+};
+
+/**
+ * Mengubah status tampil Toko Script di halaman awal (home).
+ */
+export const setTokoScriptHomeVisibility = async (visible: boolean): Promise<boolean> => {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(STORAGE_SHOW_ON_HOME_KEY, visible ? 'true' : 'false');
+    }
+    await syncToSupabase('show_toko_script_on_home', visible ? 'true' : 'false');
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('toko_script_visibility_changed', { detail: { visible } }));
+    }
+    return true;
+  } catch (err) {
+    console.error('Failed to set toko script visibility:', err);
+    return false;
+  }
+};
 
 // Default global settings untuk kemitraan reseller
 export const DEFAULT_RESELLER_GLOBAL_SETTINGS: ResellerGlobalSettings = {
@@ -35,33 +88,22 @@ export const DEFAULT_SCRIPT_PACKAGES: ScriptPackage[] = [
   { id: 'pkg-lt', name: 'Lifetime', days: 999999, price: 350000, is_active: true, description: 'Akses permanen tanpa batas waktu' },
 ];
 
-// Helper to save to Supabase app_settings reliably
-async function syncToSupabase(key: string, value: string, description?: string) {
+// Helper to save to Supabase app_settings
+async function syncToSupabase(key: string, value: string) {
   try {
-    const { error: upsertError } = await supabase.from('app_settings').upsert({
+    const { error } = await supabase.from('app_settings').upsert({
       key,
       value,
-      description: description || null,
       updated_at: new Date().toISOString(),
     }, { onConflict: 'key' });
 
-    if (upsertError) {
-      console.warn(`[TokoScriptStore] Upsert error for ${key}:`, upsertError);
-      const { data: existing } = await supabase
-        .from('app_settings')
-        .select('id')
-        .eq('key', key)
-        .maybeSingle();
-
+    if (error) {
+      console.warn(`[TokoScriptStore] Upsert error for ${key}:`, error);
+      const { data: existing } = await supabase.from('app_settings').select('id').eq('key', key).maybeSingle();
       if (existing?.id) {
-        await supabase
-          .from('app_settings')
-          .update({ value, updated_at: new Date().toISOString() })
-          .eq('key', key);
+        await supabase.from('app_settings').update({ value, updated_at: new Date().toISOString() }).eq('key', key);
       } else {
-        await supabase
-          .from('app_settings')
-          .insert({ key, value, description: description || null });
+        await supabase.from('app_settings').insert({ key, value });
       }
     }
   } catch (err) {
@@ -103,14 +145,8 @@ export const getTokoScripts = async (): Promise<TokoScriptProduct[]> => {
 
 export const saveTokoScripts = async (scripts: TokoScriptProduct[]): Promise<void> => {
   const json = JSON.stringify(scripts);
-  try {
-    localStorage.setItem(STORAGE_SCRIPTS_KEY, json);
-    window.dispatchEvent(new CustomEvent('toko_scripts_updated', { detail: scripts }));
-    window.dispatchEvent(new Event('storage'));
-  } catch (e) {
-    console.error(e);
-  }
-  await syncToSupabase('toko_scripts_catalog', json, 'Toko Script Catalog Products');
+  localStorage.setItem(STORAGE_SCRIPTS_KEY, json);
+  await syncToSupabase('toko_scripts_catalog', json);
 };
 
 export const addTokoScript = async (product: Omit<TokoScriptProduct, 'id' | 'createdAt' | 'updatedAt'>): Promise<TokoScriptProduct> => {
@@ -128,8 +164,34 @@ export const addTokoScript = async (product: Omit<TokoScriptProduct, 'id' | 'cre
 
 export const updateTokoScript = async (id: string, updates: Partial<TokoScriptProduct>): Promise<TokoScriptProduct | null> => {
   const list = await getTokoScripts();
-  const idx = list.findIndex(p => p.id === id);
-  if (idx === -1) return null;
+  let idx = list.findIndex(p => p.id === id);
+  if (idx === -1) {
+    idx = list.findIndex(p => p.rawId && p.rawId.toLowerCase() === id.toLowerCase());
+  }
+
+  if (idx === -1) {
+    // If somehow not found in existing list, create new item with this id
+    const newProduct: TokoScriptProduct = {
+      id,
+      title: updates.title || 'Script Baru',
+      description: updates.description || '',
+      rawId: updates.rawId || id,
+      luaScript: updates.luaScript || '',
+      media: updates.media || [],
+      packages: updates.packages || DEFAULT_SCRIPT_PACKAGES,
+      resellerCommissionPct: updates.resellerCommissionPct || 20,
+      isActive: updates.isActive !== undefined ? updates.isActive : true,
+      isMaintenance: !!updates.isMaintenance,
+      maintenanceNotice: updates.maintenanceNotice || '',
+      maintenanceStartedAt: updates.maintenanceStartedAt || null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    list.unshift(newProduct);
+    await saveTokoScripts(list);
+    return newProduct;
+  }
+
   list[idx] = {
     ...list[idx],
     ...updates,
@@ -157,41 +219,123 @@ export const getScriptRawId = (prod: TokoScriptProduct): string => {
 };
 
 /**
- * Wrapper proteksi runtime Lua yang dieksekusi di Roblox via loadstring
- * Mendukung semua executor (Delta, Codex, Hydrogen, Fluxus, Wave, Solara, Arceus, Synapse, dll.)
+ * Format resmi output loadstring yang diberikan kepada pembeli:
+ * _G.Axstools = "keysystem"
+ * loadstring(game:HttpGet("https://domain.com/api/public/raw/id?key=" .. _G.Axstools))()
+ */
+export const generateScriptLoaderCode = (
+  key: string,
+  scriptId: string,
+  customDomain?: string
+): string => {
+  const domain = (
+    customDomain ||
+    (typeof window !== 'undefined' ? window.location.origin : 'https://tools.arexans.my.id')
+  ).replace(/\/+$/, '');
+
+  const cleanKey = key || 'keysystem';
+  const cleanId = scriptId || 'main';
+
+  return `_G.Axstools = "${cleanKey}"\nloadstring(game:HttpGet("${domain}/api/public/raw/${cleanId}?key=" .. _G.Axstools))()`;
+};
+
+/**
+ * Generator Lua Wrapper Proteksi Key & HWID Otomatis untuk Script Langsung Jalan:
+ * - Default 1 HWID slot
+ * - Mengecek _G.Axstools dan HWID RbxAnalyticsService
+ * - Memanggil API validate-key
+ * - Jika melebihi 1 slot HWID, memblokir dan mengarahkan untuk beli penambahan +1 slot HWID permanen
+ * - Jika lolos, menjalankan script asli developer
  */
 export const generateProtectedLuaWrapper = (
-  script: { title: string; id: string; rawId?: string; luaScript?: string; isMaintenance?: boolean; maintenanceNotice?: string },
+  rawScript: string,
+  scriptTitle: string,
+  scriptId: string,
   apiOrigin: string,
-  queryKey: string = ''
+  queryKey?: string
 ): string => {
-  if (script.isMaintenance) {
-    const notice = (script.maintenanceNotice || 'Script sedang maintenance. Key Anda dibekukan sementara agar tidak rugi.').replace(/"/g, "'");
-    return `warn("[Axstools] SCRIPT MAINTENANCE: ${notice}")
-pcall(function()
-    game:GetService("StarterGui"):SetCore("SendNotification", {
-        Title = "Axstools Maintenance",
-        Text = "${notice}",
-        Duration = 10
-    })
-end)`;
-  }
-
-  const rawScript = script.luaScript || 'print("[Axstools] No script code defined.")';
-  const title = (script.title || 'Toko Script').replace(/"/g, '\\"');
-  const targetId = (script.rawId && script.rawId.trim()) ? script.rawId.trim() : script.id;
+  const domain = apiOrigin.replace(/\/+$/, '');
+  const title = scriptTitle || 'Script Axstools';
+  const cleanQKey = (queryKey || '').trim();
 
   return `-- [[ AXSTOOLS PROTECTED RUNTIME ]]
--- Title: ${title} (ID: ${targetId})
--- Key System & HWID Protection Layer (Default 1 HWID Slot)
+-- Title: ${title} (ID: ${scriptId})
+-- Key System, HWID & Anti-Dumper Layer (Default 1 HWID Slot)
 
-local KEY = _G.Axstools or _G.AxstoolsKey or _G.Key or _G.LicenseKey
-if (not KEY or KEY == "" or KEY == "keysystem") and "${queryKey}" ~= "" and "${queryKey}" ~= "keysystem" then
-    KEY = "${queryKey}"
+-- ============================================================
+-- [[ AXSTOOLS ANTI-DUMP & SECURITY INTEGRITY ]]
+-- ============================================================
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+if not LocalPlayer then
+    pcall(function()
+        LocalPlayer = Players.PlayerAdded:Wait()
+    end)
+    if not LocalPlayer then
+        LocalPlayer = Players:GetPlayers()[1]
+    end
+end
+
+-- Fungsi Kick Otomatis Jika Terdeteksi Dumper
+local function kickDumper(reason)
+    local kickMsg = "\\n\\n[AXSTOOLS ANTI-DUMP SECURITY]\\n" .. tostring(reason or "Percobaan dumper script terdeteksi!") .. "\\nAkses Anda langsung diblokir."
+    pcall(function()
+        if LocalPlayer and LocalPlayer.Kick then
+            LocalPlayer:Kick(kickMsg)
+        end
+    end)
+    while true do
+        task.wait(9e9)
+    end
+end
+
+-- 1. Scan Dumper & HTTP Spy Tool Aktif
+local function scanForDumpers()
+    if getgenv then
+        local env = getgenv()
+        if env.SimpleSpyExecuted or env.Hydroxide or env.TurtleSpy or env.HttpSpy or env.DexDumper or env.ScriptDumper or env.OwlHubDumper then
+            kickDumper("Dumper / HTTP Spy tool terdeteksi aktif di background!")
+            return false
+        end
+    end
+    return true
+end
+
+if not scanForDumpers() then return end
+
+-- 2. Anti-Decompile / Memory Inspection Traps
+pcall(function()
+    if debug and type(debug.getinfo) == "function" then
+        local ok, info = pcall(debug.getinfo, 1)
+        if not ok or not info then
+            kickDumper("Tampering debug environment terdeteksi!")
+        end
+    end
+end)
+
+-- 3. Background Continuous Scanner
+task.spawn(function()
+    while task.wait(3) do
+        if getgenv then
+            local env = getgenv()
+            if env.SimpleSpyExecuted or env.Hydroxide or env.TurtleSpy or env.HttpSpy or env.DexDumper or env.ScriptDumper or env.OwlHubDumper then
+                kickDumper("Dumper / HTTP Spy dijalankan saat script sedang aktif!")
+                break
+            end
+        end
+    end
+end)
+
+-- ============================================================
+-- [[ KEY SYSTEM & HWID VERIFICATION ]]
+-- ============================================================
+local KEY = _G.Axstools
+if (not KEY or KEY == "" or KEY == "keysystem") and "${cleanQKey}" ~= "" then
+    KEY = "${cleanQKey}"
 end
 
 if not KEY or KEY == "" or KEY == "keysystem" then
-    warn("[Axstools] ERROR: _G.Axstools belum didefinisikan! Harap pasang key Anda:")
+    warn("[Axstools] ERROR: _G.Axstools belum didefinisikan! Harap masukkan key Anda:")
     warn('_G.Axstools = "KEY_ANDA"')
     pcall(function()
         game:GetService("StarterGui"):SetCore("SendNotification", {
@@ -204,27 +348,8 @@ if not KEY or KEY == "" or KEY == "keysystem" then
 end
 
 local HttpService = game:GetService("HttpService")
-local Players = game:GetService("Players")
-local LocalPlayer = Players.LocalPlayer
-if not LocalPlayer then
-    pcall(function()
-        LocalPlayer = Players:GetPropertyChangedSignal("LocalPlayer"):Wait() or Players.LocalPlayer
-    end)
-end
 
 local function getHwid()
-    local hwid = nil
-    pcall(function()
-        if type(gethwid) == "function" then
-            hwid = gethwid()
-        elseif type(get_hwid) == "function" then
-            hwid = get_hwid()
-        elseif type(getexecutorhwid) == "function" then
-            hwid = getexecutorhwid()
-        end
-    end)
-    if hwid and tostring(hwid) ~= "" then return tostring(hwid) end
-
     local ok, id = pcall(function() return game:GetService("RbxAnalyticsService"):GetClientId() end)
     if ok and id and tostring(id) ~= "" then return tostring(id) end
     return LocalPlayer and tostring(LocalPlayer.UserId) or "FALLBACK_HWID"
@@ -235,44 +360,22 @@ local USERNAME = LocalPlayer and LocalPlayer.Name or "Unknown"
 
 local function httpRequest(opts)
     local req = (syn and syn.request) or (http and http.request) or (fluxus and fluxus.request) or request or http_request
-    local compatOpts = {
-        Url = opts.Url or opts.url,
-        url = opts.Url or opts.url,
-        Method = opts.Method or opts.method or "GET",
-        method = opts.Method or opts.method or "GET",
-        Headers = opts.Headers or opts.headers or { ["Content-Type"] = "application/json" },
-        headers = opts.Headers or opts.headers or { ["Content-Type"] = "application/json" },
-        Body = opts.Body or opts.body,
-        body = opts.Body or opts.body
-    }
     if req then
-        local ok, res = pcall(req, compatOpts)
-        if ok and res then
-            local rBody = res.Body or res.body or res.data or ""
-            local rStatus = res.StatusCode or res.status_code or res.Status or res.statusCode or 200
-            return { StatusCode = rStatus, Body = tostring(rBody), Success = true }
-        end
+        local ok, res = pcall(req, opts)
+        if ok and res then return res end
     end
-
-    local getUrl = opts.Url or opts.url
-    if opts.QueryStr and opts.QueryStr ~= "" then
-        getUrl = getUrl .. (string.find(getUrl, "?") and "&" or "?") .. opts.QueryStr
-    end
-    local ok, body = pcall(function() return game:HttpGet(getUrl) end)
-    if ok and body then
-        return { StatusCode = 200, Body = tostring(body), Success = true }
-    end
+    local ok, body = pcall(function() return game:HttpGet(opts.Url) end)
+    if ok and body then return { StatusCode = 200, Body = body } end
     return nil
 end
 
-local VALIDATE_URL = "${apiOrigin}/api/validate-key"
-local queryParams = "key=" .. HttpService:UrlEncode(tostring(KEY)) .. "&productId=" .. HttpService:UrlEncode("${targetId}") .. "&hwid=" .. HttpService:UrlEncode(tostring(HWID)) .. "&robloxUsername=" .. HttpService:UrlEncode(tostring(USERNAME))
+local VALIDATE_URL = "${domain}/api/validate-key"
 local payload = HttpService:JSONEncode({
-    key = tostring(KEY),
-    productId = "${targetId}",
-    productTitle = "${title}",
-    hwid = tostring(HWID),
-    robloxUsername = tostring(USERNAME)
+    key = KEY,
+    productId = "${scriptId}",
+    productTitle = "${title.replace(/"/g, '\\"')}",
+    hwid = HWID,
+    robloxUsername = USERNAME
 })
 
 local res = httpRequest({
@@ -281,8 +384,7 @@ local res = httpRequest({
     Headers = {
         ["Content-Type"] = "application/json"
     },
-    Body = payload,
-    QueryStr = queryParams
+    Body = payload
 })
 
 local isValid = false
@@ -290,14 +392,14 @@ local errorMsg = "Gagal menghubungi server verifikasi Axstools."
 local hwidLimitReached = false
 local isFrozen = false
 
-if res and res.Body and res.Body ~= "" then
+if res and res.Body then
     local ok, data = pcall(function() return HttpService:JSONDecode(res.Body) end)
     if ok and type(data) == "table" then
         if data.valid or data.success then
             isValid = true
         else
             errorMsg = data.error or data.message or "Key tidak valid"
-            if data.hwid_limit_reached or data.hwidLimitReached or (data.error and (string.find(string.lower(data.error), "batas perangkat") or string.find(string.lower(data.error), "maximum devices"))) then
+            if data.hwid_limit_reached or (data.error and string.find(string.lower(data.error), "maximum devices")) then
                 hwidLimitReached = true
             end
             if data.frozen then
@@ -311,7 +413,7 @@ if not isValid then
     if hwidLimitReached then
         warn("[Axstools] HWID LIMIT REACHED! Kuota perangkat untuk key ini penuh (Default 1 HWID).")
         warn("[Axstools] Beli penambahan +1 slot HWID permanen di portal Key System:")
-        warn("${apiOrigin}/key-system")
+        warn("${domain}/key-system")
         pcall(function()
             game:GetService("StarterGui"):SetCore("SendNotification", {
                 Title = "Axstools HWID Penuh!",
@@ -350,30 +452,30 @@ pcall(function()
     })
 end)
 
--- [[ SCRIPT LANGSUNG JALAN DARI DEVELOPER ]]
-${rawScript}
+-- ============================================================
+-- [[ EXECUTE DEVELOPER RAW SCRIPT ]]
+-- ============================================================
+local function executePayload()
+    scanForDumpers()
+    local ok, execErr = pcall(function()
+        ${rawScript}
+    end)
+    if not ok then
+        warn("[Axstools] Error saat mengeksekusi script: " .. tostring(execErr))
+    end
+end
+
+if newcclosure then
+    local s, cclosure = pcall(newcclosure, executePayload)
+    if s and cclosure then
+        cclosure()
+    else
+        executePayload()
+    end
+else
+    executePayload()
+end
 `;
-};
-
-/**
- * Format resmi output loadstring yang diberikan kepada pembeli:
- * _G.Axstools = "keysystem"
- * loadstring(game:HttpGet("https://domain.com/api/public/raw/id?key=" .. _G.Axstools))()
- */
-export const generateScriptLoaderCode = (
-  key: string,
-  scriptId: string,
-  customDomain?: string
-): string => {
-  const domain = (
-    customDomain ||
-    (typeof window !== 'undefined' ? window.location.origin : 'https://tools.arexans.my.id')
-  ).replace(/\/+$/, '');
-
-  const cleanKey = key || 'keysystem';
-  const cleanId = scriptId || 'main';
-
-  return `_G.Axstools = "${cleanKey}"\nloadstring(game:HttpGet("${domain}/api/public/raw/${cleanId}?key=" .. _G.Axstools))()`;
 };
 
 // -------------------------------------------------------------
@@ -758,59 +860,10 @@ export const logoutReseller = (): void => {
   setCurrentResellerSession(null);
 };
 
-export const REFERRAL_STORAGE_KEY = 'arexans_reseller_ref';
-export const REFERRAL_EXPIRY_DAYS = 30;
-
-export interface StoredReferral {
-  code: string;
-  username: string;
-  name: string;
-  timestamp: number;
-}
-
-export const getStoredReferral = (): StoredReferral | null => {
-  try {
-    const raw = localStorage.getItem(REFERRAL_STORAGE_KEY);
-    if (!raw) return null;
-    const parsed: StoredReferral = JSON.parse(raw);
-    const maxAgeMs = REFERRAL_EXPIRY_DAYS * 24 * 60 * 60 * 1000;
-    if (Date.now() - parsed.timestamp > maxAgeMs) {
-      localStorage.removeItem(REFERRAL_STORAGE_KEY);
-      return null;
-    }
-    return parsed;
-  } catch {
-    return null;
-  }
-};
-
-export const setStoredReferral = (code: string, username: string, name?: string): void => {
-  try {
-    const data: StoredReferral = {
-      code: code.trim().toLowerCase(),
-      username: username.trim().toLowerCase(),
-      name: name || username,
-      timestamp: Date.now(),
-    };
-    localStorage.setItem(REFERRAL_STORAGE_KEY, JSON.stringify(data));
-  } catch (e) {
-    console.warn('Failed to save stored referral:', e);
-  }
-};
-
-export const clearStoredReferral = (): void => {
-  localStorage.removeItem(REFERRAL_STORAGE_KEY);
-};
-
 export const findResellerByCode = async (code: string): Promise<ResellerAccount | null> => {
   if (!code) return null;
-  const clean = code.trim().toLowerCase();
   const accounts = await getResellerAccounts();
-  return accounts.find(a => 
-    (a.username.toLowerCase() === clean || 
-     (a.referralCode && a.referralCode.toLowerCase() === clean)) && 
-    a.isActive
-  ) || null;
+  return accounts.find(a => a.referralCode.toUpperCase() === code.trim().toUpperCase() && a.isActive) || null;
 };
 
 // -------------------------------------------------------------
@@ -873,15 +926,6 @@ export const recordResellerSale = async (params: {
   const reseller = await findResellerByCode(params.resellerCode);
   if (!reseller) return null;
 
-  // Prevent duplicate commission record for the same transactionId
-  if (params.transactionId) {
-    const existingSales = await getResellerSales();
-    if (existingSales.some(s => s.transactionId === params.transactionId)) {
-      console.log(`[ResellerSale] Sale for tx ${params.transactionId} already recorded. Skipping.`);
-      return null;
-    }
-  }
-
   // Cek apakah produk sesuai dengan setting produk diskon/komisi reseller
   const scope = reseller.commissionScope || 'both';
   if (scope !== 'both' && scope !== params.productSource) {
@@ -896,8 +940,7 @@ export const recordResellerSale = async (params: {
   const newSale: ResellerSale = {
     id: 'sale-' + Math.random().toString(36).slice(2, 9),
     resellerId: reseller.id,
-    resellerCode: reseller.username || reseller.referralCode,
-    resellerUsername: reseller.username,
+    resellerCode: reseller.referralCode,
     productId: params.productId,
     productTitle: params.productTitle,
     packageName: params.packageName,
@@ -966,7 +1009,7 @@ export const getCommissionWithdrawals = async (resellerId?: string): Promise<Com
   }
 
   if (resellerId) {
-    return localData.filter(s => s.resellerId === resellerId);
+    return localData.filter(w => w.resellerId === resellerId);
   }
   return localData;
 };
@@ -988,7 +1031,6 @@ export const requestCommissionPayout = async (params: {
   accountNumber: string;
   accountName: string;
   notes?: string;
-  qrisImageUrl?: string;
 }): Promise<{ success: boolean; message: string; withdrawal?: CommissionWithdrawal; updatedAccount?: ResellerAccount }> => {
   const accounts = await getResellerAccounts();
   const accIdx = accounts.findIndex(a => a.id === params.resellerId);
@@ -1007,20 +1049,16 @@ export const requestCommissionPayout = async (params: {
     return { success: false, message: `Nominal penarikan melebihi saldo komisi aktif (Maksimal: Rp ${account.activeCommission.toLocaleString('id-ID')}).` };
   }
 
-  const qrisUrlFinal = params.qrisImageUrl || account.payoutQrisUrl;
-
   const newWithdrawal: CommissionWithdrawal = {
     id: 'wd-' + Math.random().toString(36).slice(2, 9),
     resellerId: account.id,
-    resellerName: account.name || account.username,
-    resellerUsername: account.username,
-    resellerCode: account.username || account.referralCode,
+    resellerName: account.name,
+    resellerCode: account.referralCode,
     amount: withdrawAmount,
     payoutMethod: params.payoutMethod || account.payoutMethod,
     accountNumber: params.accountNumber || account.payoutAccountNumber,
     accountName: params.accountName || account.payoutAccountName,
     notes: params.notes || 'Penarikan komisi bagi hasil oleh reseller',
-    qrisImageUrl: qrisUrlFinal,
     status: 'completed', // Berhasil & direset ulang
     requestedAt: new Date().toISOString(),
     completedAt: new Date().toISOString(),
@@ -1029,9 +1067,6 @@ export const requestCommissionPayout = async (params: {
   // 1. Reset saldo komisi aktif!
   account.activeCommission = Math.max(0, account.activeCommission - withdrawAmount);
   account.totalWithdrawnCommission += withdrawAmount;
-  if (params.qrisImageUrl) {
-    account.payoutQrisUrl = params.qrisImageUrl;
-  }
   account.updatedAt = new Date().toISOString();
 
   await saveResellerAccounts(accounts);
@@ -1046,7 +1081,7 @@ export const requestCommissionPayout = async (params: {
 
   return {
     success: true,
-    message: `Pengambilan komisi sebesar Rp ${withdrawAmount.toLocaleString('id-ID')} berhasil! Jumlah komisi Anda telah direset ulang ke Rp ${account.activeCommission.toLocaleString('id-ID')}. Developer akan mentransfer ke ${newWithdrawal.payoutMethod}${newWithdrawal.payoutMethod === 'QRIS' ? ' via Scan QRIS' : ` (${newWithdrawal.accountNumber})`}.`,
+    message: `Pengambilan komisi sebesar Rp ${withdrawAmount.toLocaleString('id-ID')} berhasil! Jumlah komisi Anda telah direset ulang ke Rp ${account.activeCommission.toLocaleString('id-ID')}. Developer akan mentransfer ke ${newWithdrawal.payoutMethod} (${newWithdrawal.accountNumber}).`,
     withdrawal: newWithdrawal,
     updatedAccount: account,
   };

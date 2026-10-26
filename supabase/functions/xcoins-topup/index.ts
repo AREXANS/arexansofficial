@@ -2,7 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import {
   corsHeaders, jsonHeaders, loadPaymentConfig, resolveGateway,
-  arexansCreateQris, pakasirCreateQris, qrImageUrl, saveGatewayTxId,
+  arexansCreateQris, xmpaymentCreateQris, pakasirCreateQris, qrImageUrl, saveGatewayTxId,
 } from "../_shared/payment.ts";
 
 serve(async (req) => {
@@ -35,6 +35,19 @@ serve(async (req) => {
       qrString = result.qrString || "";
       totalAmount = result.totalAmount || amount;
       qrisUrl = qrImageUrl(qrString);
+      if (result.gatewayTxId) await saveGatewayTxId(supabase, orderId, result.gatewayTxId);
+    } else if (gateway === "xmpayment" || cfg.xmpayment.configured) {
+      const result = await xmpaymentCreateQris(cfg, orderId, amount, {
+        customerName: `Deposit XCoins (${userId})`,
+        customerEmail: "topup@arexans.my.id",
+        redirectUrl: "https://tools.arexans.my.id",
+      });
+      if (!result.ok) {
+        return new Response(JSON.stringify({ error: result.error }), { status: 400, headers: jsonHeaders });
+      }
+      qrString = result.qrString || "";
+      totalAmount = result.totalAmount || amount;
+      qrisUrl = result.qrCodeUrl || (qrString ? qrImageUrl(qrString) : "");
       if (result.gatewayTxId) await saveGatewayTxId(supabase, orderId, result.gatewayTxId);
     } else if (cfg.pakasir.mode === "live" && cfg.pakasir.configured) {
       const result = await pakasirCreateQris(cfg, orderId, amount);

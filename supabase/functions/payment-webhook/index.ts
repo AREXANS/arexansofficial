@@ -49,10 +49,91 @@ serve(async (req) => {
     const queryKey = url.searchParams.get("key") || url.searchParams.get("webhook_key") || "";
 
     // Detect source
-    const isPakasir = !!body.order_id && !!body.project;
-    const isArexans = (!body.project && (!!body.transactionId || !!body.transaction_id || !!body.secret
+    const xmpSigHeader = req.headers.get("x-xmp-signature") || "";
+    const xmpEventHeader = req.headers.get("x-xmp-event") || "";
+    const isXMPayment = !!xmpSigHeader || !!xmpEventHeader || (body.event && typeof body.event === "string" && (body.event.startsWith("invoice.") || body.event === "test.ping")) || (body.data && (body.data as any).order_id && !body.project);
+    const isPakasir = !isXMPayment && !!body.order_id && !!body.project;
+    const isArexans = !isXMPayment && (!body.project && (!!body.transactionId || !!body.transaction_id || !!body.secret
       || !!req.headers.get("x-arexanspay-signature") || !!req.headers.get("x-casaku-signature")
       || !!req.headers.get("x-webhook-key") || !!body.webhook_key));
+
+    if (isXMPayment) {
+      // === XMPAYMENT (https://xmpayment.my.id/dashboard/docs) ===
+      const event = String(body.event || xmpEventHeader || "");
+      if (event === "test.ping") {
+        return new Response(JSON.stringify({ received: true, pong: true }), { status: 200, headers: jsonHeaders });
+      }
+
+      const xmpData = (body.data as any) || body;
+      const orderId = String(xmpData.order_id || body.order_id || "");
+      if (!orderId) {
+        console.warn("[payment-webhook] xmpayment missing order_id");
+        return genericError(400);
+      }
+
+      // Check webhook secret
+      const { data: whSettings } = await supabase
+        .from("app_settings").select("key, value")
+        .in("key", ["xmpayment_webhook_secret", "xmp_webhook_secret", "xmpayment_api_key", "xmp_api_key"]);
+      const s = Object.fromEntries((whSettings || []).map((r: any) => [r.key, (r.value ?? "").toString().trim()]));
+      const secret = s.xmpayment_webhook_secret || s.xmp_webhook_secret || "whsec_bYGhuiJpREZP4N5zB0bCMOP6LrDAQ3wsOJzOThgNZKY";
+      const apiKey = s.xmpayment_api_key || s.xmp_api_key || "xmp_live_d2b8ea709d5d7a57ff974cd771435e0f58d4da888593350b";
+
+      let verified = false;
+
+      // 1. Verify HMAC-SHA256 signature if provided
+      if (xmpSigHeader && secret) {
+        try {
+          const enc = new TextEncoder();
+          const key = await crypto.subtle.importKey(
+            "raw", enc.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
+          );
+          const sig = await crypto.subtle.sign("HMAC", key, enc.encode(rawBodyText));
+          const expectedSig = Array.from(new Uint8Array(sig)).map((b) => b.toString(16).padStart(2, "0")).join("");
+          verified = await timingSafeEqual(xmpSigHeader.toLowerCase().trim(), expectedSig.toLowerCase().trim());
+        } catch (err) {
+          console.error("[payment-webhook] xmp signature error:", err);
+        }
+      }
+
+      // 2. Fallback: Verify via XMPayment status API directly (100% reliable)
+      if (!verified && apiKey) {
+        try {
+          const checkRes = await fetch(`https://xmpayment.my.id/api/v1/status/${encodeURIComponent(orderId)}`, {
+            headers: { "Authorization": `Bearer ${apiKey}`, "x-api-key": apiKey }
+          });
+          const checkJson = await checkRes.json();
+          const st = String(checkJson?.data?.status || "").toUpperCase();
+          if (st === "SETTLED" || checkJson?.data?.is_paid === true) {
+            verified = true;
+          }
+        } catch (err) {
+          console.error("[payment-webhook] xmp verify api call error:", err);
+        }
+      }
+
+      if (!verified) {
+        console.warn("[payment-webhook] xmp verification failed for", orderId);
+        return genericError(401);
+      }
+
+      const status = String(xmpData.status || "").toLowerCase();
+      const okStatuses = ["settled", "paid", "success", "completed"];
+      if (event === "invoice.paid" || okStatuses.includes(status)) {
+        const { data: tx } = await supabase
+          .from("transactions").select("*").eq("transaction_id", orderId).maybeSingle();
+
+        if (tx && tx.status !== "paid" && tx.status !== "claimed") {
+          await supabase.from("transactions").update({
+            status: "claimed",
+            paid_at: new Date().toISOString()
+          }).eq("id", tx.id);
+          await handlePostPayment(supabase, tx);
+        }
+      }
+
+      return new Response(JSON.stringify({ received: true }), { status: 200, headers: jsonHeaders });
+    }
 
     if (isPakasir) {
       // === PAKASIR ===

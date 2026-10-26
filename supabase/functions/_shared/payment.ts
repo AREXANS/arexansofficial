@@ -13,11 +13,15 @@ export const jsonHeaders = { ...corsHeaders, "Content-Type": "application/json" 
 
 export const AREXANSPAY_BASE = "https://www.arexanspay.my.id";
 export const PAKASIR_BASE = "https://app.pakasir.com";
+export const XMPAYMENT_BASE = "https://xmpayment.my.id";
+
+export const DEFAULT_XMP_API_KEY = "xmp_live_d2b8ea709d5d7a57ff974cd771435e0f58d4da888593350b";
+export const DEFAULT_XMP_WEBHOOK_SECRET = "whsec_bYGhuiJpREZP4N5zB0bCMOP6LrDAQ3wsOJzOThgNZKY";
 
 export const PAID_STATUSES = ["paid", "success", "completed", "settled"];
 
 export interface PaymentConfig {
-  gateway: string; // "arexanspay" | "pakasir" | "both"
+  gateway: string; // "xmpayment" | "arexanspay" | "both"
   simulation: boolean;
   discordWebhookUrl: string;
   arexanspay: {
@@ -27,16 +31,23 @@ export interface PaymentConfig {
     numberId: string;
     configured: boolean;
   };
+  xmpayment: {
+    apiKey: string;
+    webhookSecret: string;
+    mode: string; // "live" | "sandbox"
+    configured: boolean;
+  };
   pakasir: {
     slug: string;
     apiKey: string;
-    mode: string; // sandbox | demo | live
+    mode: string;
     configured: boolean;
   };
 }
 
 const SETTING_KEYS = [
   "payment_gateway", "payment_simulation", "discord_webhook_url",
+  "xmpayment_api_key", "xmp_api_key", "xmpayment_webhook_secret", "xmp_webhook_secret", "xmpayment_mode",
   "arexanspay_api_key", "arexanspay_license_key", "arexanspay_qris_id",
   "arexanspay_webhook_key", "arexanspay_number_id",
   // legacy aliases for seamless backward compatibility
@@ -56,12 +67,18 @@ export async function loadPaymentConfig(supabase: any): Promise<PaymentConfig> {
     return "";
   };
 
-  const rawGateway = (pick("payment_gateway") || "arexanspay").toLowerCase();
-  const gateway = (rawGateway === "cashify" || rawGateway === "casaku") ? "arexanspay" : rawGateway;
+  const rawGateway = (pick("payment_gateway") || "xmpayment").toLowerCase();
+  let gateway = rawGateway;
+  if (gateway === "cashify" || gateway === "casaku") gateway = "arexanspay";
+  if (gateway === "pakasir") gateway = "xmpayment"; // seamless migration
 
   const apiKey = pick("arexanspay_api_key", "arexanspay_license_key", "casaku_license_key", "cashify_license_key");
   const qrisId = pick("arexanspay_qris_id", "casaku_qris_id", "cashify_qris_id");
   const webhookKey = pick("arexanspay_webhook_key", "casaku_webhook_key", "casaku_webhook_secret", "cashify_webhook_key");
+
+  const xmpApiKey = pick("xmpayment_api_key", "xmp_api_key") || DEFAULT_XMP_API_KEY;
+  const xmpWebhookSecret = pick("xmpayment_webhook_secret", "xmp_webhook_secret") || DEFAULT_XMP_WEBHOOK_SECRET;
+  const xmpMode = (pick("xmpayment_mode") || "live").toLowerCase();
 
   return {
     gateway,
@@ -74,6 +91,12 @@ export async function loadPaymentConfig(supabase: any): Promise<PaymentConfig> {
       numberId: pick("arexanspay_number_id"),
       configured: !!apiKey && (!!qrisId || !!pick("arexanspay_number_id")),
     },
+    xmpayment: {
+      apiKey: xmpApiKey,
+      webhookSecret: xmpWebhookSecret,
+      mode: xmpMode,
+      configured: !!xmpApiKey,
+    },
     pakasir: {
       slug: pick("pakasir_slug"),
       apiKey: pick("pakasir_api_key"),
@@ -84,15 +107,21 @@ export async function loadPaymentConfig(supabase: any): Promise<PaymentConfig> {
 }
 
 /** Resolve which gateway to use for a NEW transaction. */
-export function resolveGateway(cfg: PaymentConfig, requested?: string): "arexanspay" | "pakasir" {
-  const norm = (v?: string) =>
-    (v === "cashify" || v === "casaku") ? "arexanspay" : v;
+export function resolveGateway(cfg: PaymentConfig, requested?: string): "arexanspay" | "xmpayment" {
+  const norm = (v?: string) => {
+    if (!v) return "";
+    const l = v.toLowerCase();
+    if (l === "cashify" || l === "casaku") return "arexanspay";
+    if (l === "pakasir") return "xmpayment";
+    return l;
+  };
+
+  const req = norm(requested);
   if (cfg.gateway === "both") {
-    const r = norm(requested);
-    if (r === "arexanspay" || r === "pakasir") return r;
-    return cfg.arexanspay.configured ? "arexanspay" : "pakasir";
+    if (req === "arexanspay" || req === "xmpayment") return req;
+    return cfg.xmpayment.configured ? "xmpayment" : "arexanspay";
   }
-  return cfg.gateway === "arexanspay" ? "arexanspay" : "pakasir";
+  return cfg.gateway === "arexanspay" ? "arexanspay" : "xmpayment";
 }
 
 export function qrImageUrl(qrString: string) {
@@ -266,6 +295,158 @@ export async function arexansCancel(cfg: PaymentConfig, gatewayTxId: string) {
     await arexansFetch(cfg, `/api/transactions/${encodeURIComponent(gatewayTxId)}/cancel`, { method: "POST" });
   } catch (err) {
     console.error("ArexansPay cancel error:", err);
+  }
+}
+
+/**
+ * XMPAYMENT GATEWAY INTEGRATION (https://xmpayment.my.id/dashboard/docs)
+ * REST API for dynamic QRIS, status check, transaction cancellation, and balance check.
+ */
+
+export interface XmPaymentCreateOptions {
+  customerName?: string;
+  customerEmail?: string;
+  redirectUrl?: string;
+}
+
+/** POST https://xmpayment.my.id/api/v1/create */
+export async function xmpaymentCreateQris(
+  cfg: PaymentConfig,
+  orderId: string,
+  amount: number,
+  opts: XmPaymentCreateOptions = {}
+): Promise<QrisResult> {
+  const apiKey = cfg.xmpayment?.apiKey || DEFAULT_XMP_API_KEY;
+  if (!apiKey) {
+    return { ok: false, error: "API Key XMPayment belum dikonfigurasi. Isi API Key di menu Developer Settings." };
+  }
+
+  const payload = {
+    order_id: orderId,
+    amount: Math.round(Number(amount)),
+    customer_name: (opts.customerName || "Customer").trim(),
+    customer_email: (opts.customerEmail || "customer@example.com").trim(),
+    redirect_url: (opts.redirectUrl || "https://tools.arexans.my.id").trim(),
+  };
+
+  try {
+    const res = await fetch(`${XMPAYMENT_BASE}/api/v1/create`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`,
+        "x-api-key": apiKey,
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const raw = await res.text();
+    let json: any = null;
+    try { json = JSON.parse(raw); } catch { /* ignore */ }
+    console.log(`XMPayment create -> ${res.status}: ${raw.slice(0, 300)}`);
+
+    if (json && (json.success === true || res.status === 201 || res.status === 200)) {
+      const d = json.data ?? json;
+      const qrString = d.qr_string || d.qr_code || d.qrString || "";
+      const totalAmount = Number(d.total_amount ?? d.base_amount ?? amount);
+      const qrCodeUrl = d.qr_code_url || (qrString ? qrImageUrl(qrString) : "");
+
+      return {
+        ok: true,
+        qrString,
+        qrBase64: d.qr_base64 || "",
+        totalAmount,
+        gatewayTxId: d.transaction_id || d.order_id || orderId,
+        expiredAt: d.expires_at || "",
+        fallback: false,
+      };
+    }
+
+    const errMsg = json?.message || json?.error?.message || json?.error || `Gagal membuat transaksi XMPayment (HTTP ${res.status})`;
+    return { ok: false, error: errMsg };
+  } catch (err: any) {
+    console.error("XMPayment create error:", err);
+    return { ok: false, error: `Gagal menghubungi server XMPayment: ${err?.message || err}` };
+  }
+}
+
+/** GET https://xmpayment.my.id/api/v1/status/:order_id */
+export async function xmpaymentCheckStatus(
+  cfg: PaymentConfig,
+  orderId: string
+): Promise<{ status: string; isPaid: boolean; totalAmount?: number; raw?: any }> {
+  const apiKey = cfg.xmpayment?.apiKey || DEFAULT_XMP_API_KEY;
+  if (!apiKey || !orderId) return { status: "", isPaid: false };
+
+  try {
+    const res = await fetch(`${XMPAYMENT_BASE}/api/v1/status/${encodeURIComponent(orderId)}`, {
+      headers: {
+        "Authorization": `Bearer ${apiKey}`,
+        "x-api-key": apiKey,
+      },
+    });
+
+    const raw = await res.text();
+    let json: any = null;
+    try { json = JSON.parse(raw); } catch { /* ignore */ }
+    console.log(`XMPayment status ${orderId} -> ${res.status}: ${raw.slice(0, 300)}`);
+
+    if (json && (json.success === true || res.ok)) {
+      const d = json.data ?? json;
+      const st = String(d.status || "").toLowerCase();
+      const isPaid = !!d.is_paid || PAID_STATUSES.includes(st);
+      return {
+        status: st,
+        isPaid,
+        totalAmount: Number(d.total_amount ?? d.base_amount ?? 0),
+        raw: d,
+      };
+    }
+
+    return { status: "", isPaid: false };
+  } catch (err) {
+    console.error("XMPayment check-status error:", err);
+    return { status: "", isPaid: false };
+  }
+}
+
+/** POST https://xmpayment.my.id/api/v1/cancel/:order_id */
+export async function xmpaymentCancel(cfg: PaymentConfig, orderId: string): Promise<boolean> {
+  const apiKey = cfg.xmpayment?.apiKey || DEFAULT_XMP_API_KEY;
+  if (!apiKey || !orderId) return false;
+
+  try {
+    const res = await fetch(`${XMPAYMENT_BASE}/api/v1/cancel/${encodeURIComponent(orderId)}`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${apiKey}`,
+        "x-api-key": apiKey,
+      },
+    });
+    const text = await res.text();
+    console.log(`XMPayment cancel ${orderId} -> ${res.status}: ${text.slice(0, 200)}`);
+    return res.ok;
+  } catch (err) {
+    console.error("XMPayment cancel error:", err);
+    return false;
+  }
+}
+
+/** GET https://xmpayment.my.id/api/v1/balance (Live Only) */
+export async function xmpaymentGetBalance(cfg: PaymentConfig): Promise<any> {
+  const apiKey = cfg.xmpayment?.apiKey || DEFAULT_XMP_API_KEY;
+  if (!apiKey) return { success: false, error: "API Key kosong" };
+
+  try {
+    const res = await fetch(`${XMPAYMENT_BASE}/api/v1/balance`, {
+      headers: {
+        "Authorization": `Bearer ${apiKey}`,
+        "x-api-key": apiKey,
+      },
+    });
+    return await res.json();
+  } catch (err: any) {
+    return { success: false, error: err?.message || err };
   }
 }
 

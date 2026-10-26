@@ -31,8 +31,15 @@ export const PublicRawScript: React.FC = () => {
           );
 
           if (found && found.luaScript) {
+            if (found.isMaintenance) {
+              const notice = found.maintenanceNotice || 'Script sedang maintenance.';
+              setContent(`warn("[Axstools] SCRIPT MAINTENANCE: ${notice}")\npcall(function() game:GetService("StarterGui"):SetCore("SendNotification", { Title = "Axstools Maintenance", Text = "${notice.replace(/"/g, "'")}", Duration = 10 }) end)`);
+              return;
+            }
+
             const apiOrigin = window.location.origin;
-            const wrapper = generateProtectedLuaWrapper(found, apiOrigin, key);
+            // Generate full protected wrapper with Anti-Dumper, Key & HWID checking
+            const wrapper = generateProtectedLuaWrapper(found.luaScript, found.title, id, apiOrigin, key);
             setContent(wrapper);
             return;
           }
