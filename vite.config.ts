@@ -2,12 +2,22 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react-swc";
 import path from "path";
 import { componentTagger } from "lovable-tagger";
+import { handleRestRequest, handleFunctionsRequest } from "./src/server/cloudsqlRouter.ts";
+import { createPool } from "./src/db/index.ts";
 
 function publicRawScriptPlugin() {
   return {
     name: 'public-raw-script-server',
     configureServer(server: any) {
       server.middlewares.use(async (req: any, res: any, next: any) => {
+        if (req.url && req.url.startsWith('/supabase-proxy')) {
+          req.url = req.url.replace(/^\/supabase-proxy/, '');
+        }
+
+        // Direct Cloud SQL REST and Functions API
+        if (await handleRestRequest(req, res)) return;
+        if (await handleFunctionsRequest(req, res)) return;
+
         const urlStr = req.url || '';
         const pathname = urlStr.split('?')[0] || '';
 
@@ -164,20 +174,15 @@ function publicRawScriptPlugin() {
         const apiOrigin = `${proto}://${host}`;
 
         try {
-          const SUPABASE_URL = 'https://caecqqzbikmwroevvyrd.supabase.co';
-          const SUPABASE_KEY = 'sb_publishable_CnZ2j0kBnLgok3J8Tu9WAA_kR31dqWL';
-
-          const resp = await fetch(`${SUPABASE_URL}/rest/v1/app_settings?select=value&key=eq.toko_scripts_catalog`, {
-            headers: {
-              'apikey': SUPABASE_KEY
-            }
-          });
-          const data = await resp.json();
+          const pool = createPool();
+          const q = await pool.query("SELECT value FROM app_settings WHERE key = 'toko_scripts_catalog' LIMIT 1");
           let foundScript: any = null;
 
-          if (data && data[0]?.value) {
-            const catalog = JSON.parse(data[0].value);
-            foundScript = catalog.find((p: any) => p.id === scriptId || (p.rawId && p.rawId.toLowerCase() === scriptId.toLowerCase()));
+          if (q.rows.length > 0 && q.rows[0]?.value) {
+            try {
+              const catalog = JSON.parse(q.rows[0].value);
+              foundScript = catalog.find((p: any) => p.id === scriptId || (p.rawId && p.rawId.toLowerCase() === scriptId.toLowerCase()));
+            } catch {}
           }
 
           if (foundScript && foundScript.luaScript) {
@@ -397,12 +402,17 @@ ${rawScript}`;
             return;
           }
 
-          // Fallback to supabase function get-script
-          const fallbackResp = await fetch(`${supabaseUrl}/functions/v1/get-script?name=${scriptId}&raw=1&public=1`);
-          const fallbackText = await fallbackResp.text();
+          // Fallback to Cloud SQL lua_scripts table
+          const scriptQ = await pool.query('SELECT content FROM lua_scripts WHERE name = $1 LIMIT 1', [scriptId]);
+          if (scriptQ.rows.length > 0 && scriptQ.rows[0].content) {
+            res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+            res.setHeader('Access-Control-Allow-Origin', '*');
+            res.end(scriptQ.rows[0].content);
+            return;
+          }
+
           res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-          res.setHeader('Access-Control-Allow-Origin', '*');
-          res.end(fallbackText);
+          res.end(`warn("[Axstools] Script '${scriptId}' tidak ditemukan.")`);
         } catch (err: any) {
           res.setHeader('Content-Type', 'text/plain; charset=utf-8');
           res.end(`warn("[Axstools] Error fetching script: ${err.message}")`);
@@ -421,12 +431,6 @@ export default defineConfig(({ mode }) => ({
       overlay: false,
     },
     proxy: {
-      '/supabase-proxy': {
-        target: 'https://caecqqzbikmwroevvyrd.supabase.co',
-        changeOrigin: true,
-        secure: false,
-        rewrite: (path) => path.replace(/^\/supabase-proxy/, ''),
-      },
       '/casaku-proxy': {
         target: 'https://api.casaku.id',
         changeOrigin: true,

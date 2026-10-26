@@ -3,8 +3,8 @@ import { createClient } from '@supabase/supabase-js';
 import type { Database } from './types';
 import { brokeredPreviewStorage } from './previewAuthStorage';
 
-const DEFAULT_SUPABASE_URL = "https://caecqqzbikmwroevvyrd.supabase.co";
-const DEFAULT_SUPABASE_KEY = "sb_publishable_CnZ2j0kBnLgok3J8Tu9WAA_kR31dqWL";
+const DEFAULT_SUPABASE_URL = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
+const DEFAULT_SUPABASE_KEY = "cloudsql-postgres-client-key";
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || DEFAULT_SUPABASE_URL;
 const SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || DEFAULT_SUPABASE_KEY;
