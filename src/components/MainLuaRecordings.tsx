@@ -42,7 +42,7 @@ export const MainLuaRecordings: FC = () => {
   const [gameNames, setGameNames] = useState<Record<string, string>>({});
   const recordingKeyRef = useRef(recordingKey);
 
-  const SUPABASE_API_BASE = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1`;
+  const SUPABASE_API_BASE = '/functions/v1';
 
   useEffect(() => {
     recordingKeyRef.current = recordingKey;

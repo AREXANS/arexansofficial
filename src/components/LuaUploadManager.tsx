@@ -489,7 +489,7 @@ const LuaUploadManager: FC = () => {
   const [loadstringDialogConfig, setLoadstringDialogConfig] = useState<LoadstringDialogConfig | null>(null);
   const [showLoadstringDialog, setShowLoadstringDialog] = useState(false);
 
-  const SUPABASE_API_BASE = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1`;
+  const SUPABASE_API_BASE = `${typeof window !== 'undefined' ? window.location.origin : ''}/functions/v1`;
 
   const fetchCustomKeys = async () => {
     try {

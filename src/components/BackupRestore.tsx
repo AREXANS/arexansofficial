@@ -34,7 +34,7 @@ const BackupRestore: FC = () => {
   const [restoreResult, setRestoreResult] = useState<any>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const API_BASE = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1`;
+  const API_BASE = '/functions/v1';
 
   const toggleTable = (key: string) => {
     setSelectedTables(prev => {

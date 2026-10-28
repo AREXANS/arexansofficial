@@ -31,7 +31,7 @@ interface BulkKeyActionsProps {
   onRefresh: () => void;
 }
 
-const API_BASE = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1`;
+const API_BASE = '/functions/v1';
 
 const TIME_UNITS: Record<string, number> = {
   'm': 60 * 1000,

@@ -2,11 +2,9 @@
 // Detects old Supabase project URLs / refs / API keys inside pasted script code
 // and rewrites them to the active project's URL + publishable (anon) key.
 
-const CURRENT_URL: string = (import.meta.env.VITE_SUPABASE_URL || '').replace(/\/+$/, '');
-const CURRENT_KEY: string = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || '';
-const CURRENT_REF: string =
-  import.meta.env.VITE_SUPABASE_PROJECT_ID ||
-  (CURRENT_URL.match(/^https?:\/\/([a-z0-9]+)\.supabase\.co/i)?.[1] ?? '');
+const CURRENT_URL: string = typeof window !== 'undefined' ? window.location.origin : '';
+const CURRENT_KEY: string = 'cloudsql-postgres-client-key';
+const CURRENT_REF: string = '';
 
 export interface BackendSyncResult {
   content: string;

@@ -153,7 +153,7 @@ const ScriptManagement: FC = () => {
   const [versionCursor, setVersionCursor] = useState<Record<string, number>>({});
 
   const PUBLIC_DOMAIN = 'https://tools.arexans.my.id';
-  const SUPABASE_API_BASE = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1`;
+  const SUPABASE_API_BASE = `${typeof window !== 'undefined' ? window.location.origin : ''}/functions/v1`;
   
   const getCurrentDomain = () => {
     if (typeof window !== 'undefined') {

@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 import DurationCodeManager from '@/components/DurationCodeManager';
 
-const API_BASE = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1`;
+const API_BASE = '/functions/v1';
 
 interface KeyItem {
   key: string;

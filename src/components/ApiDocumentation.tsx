@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { toast } from '@/hooks/use-toast';
 import { Copy, Code, MessageSquare, Gamepad2, Globe, Server, FileJson, PlusCircle, Pencil, Trash2, CheckCircle } from 'lucide-react';
 
-const API_BASE = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1`;
+const API_BASE = `${typeof window !== 'undefined' ? window.location.origin : ''}/functions/v1`;
 
 const ApiDocumentation = () => {
   const [activeTab, setActiveTab] = useState<'overview' | 'whatsapp' | 'roblox' | 'javascript'>('overview');

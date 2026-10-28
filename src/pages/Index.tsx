@@ -593,9 +593,24 @@ const Index = () => {
       )}
     </>
   );
-  if (step === 3 && paymentData && selectedPkg) return <PaymentQR packageName={selectedPkg} paymentData={paymentData} statusMsg={statusMsg} errorMsg={errorMsg} onCancel={handleCancelOrder} onCopy={copyToClipboard} onRecheck={() => checkPaymentStatus(paymentData.transactionId, daysToAdd)} formatRupiah={formatRupiah} />;
-  if (step === 4 && finalData) return <PaymentSuccess finalData={finalData} onCopy={copyToClipboard} />;
-  return null;
+  if (step === 3 && paymentData && selectedPkg) {
+    return <PaymentQR packageName={selectedPkg} paymentData={paymentData} statusMsg={statusMsg} errorMsg={errorMsg} onCancel={handleCancelOrder} onCopy={copyToClipboard} onRecheck={() => checkPaymentStatus(paymentData.transactionId, daysToAdd)} formatRupiah={formatRupiah} />;
+  }
+  if (step === 4 && finalData) {
+    return <PaymentSuccess finalData={finalData} onCopy={copyToClipboard} />;
+  }
+
+  return (
+    <PackageSelection
+      onSelect={handlePackageSelect}
+      formatRupiah={formatRupiah}
+      prices={PRICES}
+      ads={ads}
+      packages={packages}
+      defaultTab={tabParam === 'toko' ? 'toko' : 'tools'}
+      onTokoScriptOrderQris={handleTokoScriptQris}
+    />
+  );
 };
 
 export default Index;

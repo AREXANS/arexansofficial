@@ -28,7 +28,7 @@ const fmt = (bytes: number) => {
   return `${(bytes / Math.pow(1024, i)).toFixed(i === 0 ? 0 : 2)} ${units[i]}`;
 };
 
-const API_BASE = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1`;
+const API_BASE = '/functions/v1';
 
 const StorageMonitor: FC = () => {
   const [stats, setStats] = useState<Stats | null>(null);

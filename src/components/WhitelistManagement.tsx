@@ -55,7 +55,8 @@ const WhitelistManagement: FC = () => {
   const [showLoadstringDialog, setShowLoadstringDialog] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const SUPABASE_API_BASE = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1`;
+  const currentOrigin = typeof window !== 'undefined' ? window.location.origin : '';
+  const SUPABASE_API_BASE = `${currentOrigin}/functions/v1`;
 
   const generateWhitelistWrapper = (rawScript: string) => {
     return `-- Whitelist Protected Script

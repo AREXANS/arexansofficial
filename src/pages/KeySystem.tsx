@@ -45,7 +45,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
 import { generateScriptLoaderCode } from '@/lib/tokoScriptStore';
 
-const API_BASE = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1`;
+const API_BASE = '/functions/v1';
 const STORAGE_KEY = 'axs_saved_keys';
 
 interface KeyData {

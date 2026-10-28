@@ -10,32 +10,38 @@ interface IpBlockState {
 
 export const useIpBlock = () => {
   const [state, setState] = useState<IpBlockState>({
-    loading: true,
+    loading: false,
     blocked: false,
     reason: null,
     ip: null,
   });
 
   useEffect(() => {
+    let active = true;
     const checkIp = async () => {
       try {
-        const { data, error } = await supabase.functions.invoke('check-ip');
-        if (error) {
-          console.error('IP check error:', error);
-          setState({ loading: false, blocked: false, reason: null, ip: null });
-          return;
+        const timeoutPromise = new Promise<{ data: null; error: Error }>((_, reject) =>
+          setTimeout(() => reject(new Error('timeout')), 2500)
+        );
+        const result: any = await Promise.race([
+          supabase.functions.invoke('check-ip'),
+          timeoutPromise,
+        ]);
+        if (!active) return;
+        if (result?.data?.blocked) {
+          setState({
+            loading: false,
+            blocked: true,
+            reason: result.data.reason || 'IP Anda telah diblokir.',
+            ip: result.data.ip || null,
+          });
         }
-        setState({
-          loading: false,
-          blocked: data?.blocked || false,
-          reason: data?.reason || null,
-          ip: data?.ip || null,
-        });
       } catch {
-        setState({ loading: false, blocked: false, reason: null, ip: null });
+        // Silently allow access if network or timeout occurs
       }
     };
     checkIp();
+    return () => { active = false; };
   }, []);
 
   return state;

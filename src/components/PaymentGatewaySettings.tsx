@@ -362,9 +362,8 @@ export const PaymentGatewaySettings: FC<PaymentGatewaySettingsProps> = ({ onSett
     }
   };
 
-  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
   const currentOrigin = typeof window !== 'undefined' ? window.location.origin : '';
-  const webhookUrl = supabaseUrl ? `${supabaseUrl}/functions/v1/payment-webhook` : `${currentOrigin}/api/payment-webhook`;
+  const webhookUrl = `${currentOrigin}/functions/v1/payment-webhook`;
 
   // Resolved values
   const rawGateway = getValue('payment_gateway', 'xmpayment');

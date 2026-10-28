@@ -45,19 +45,7 @@
   ],
   "rewrites": [
     {
-      "source": "/loader",
-      "destination": "https://caecqqzbikmwroevvyrd.supabase.co/functions/v1/get-loader?name=keysystem"
-    },
-    {
-      "source": "/api/public/raw/:id",
-      "destination": "https://caecqqzbikmwroevvyrd.supabase.co/functions/v1/get-script?name=:id&raw=1&public=1"
-    },
-    {
-      "source": "/api/:fn",
-      "destination": "https://caecqqzbikmwroevvyrd.supabase.co/functions/v1/:fn"
-    },
-    {
-      "source": "/((?!assets|images|favicon|robots|api).*)",
+      "source": "/((?!assets|images|favicon|robots).*)",
       "destination": "/index.html"
     }
   ]

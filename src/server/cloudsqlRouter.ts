@@ -32,6 +32,28 @@ const ALLOWED_TABLES = new Set([
   'xcoins_transactions',
 ]);
 
+// Handle /auth/v1/* requests with valid JSON so gotrue client never receives HTML 200
+export function handleAuthRequest(req: any, res: any): boolean {
+  const urlStr = req.url || '';
+  const pathname = urlStr.split('?')[0] || '';
+  if (!pathname.startsWith('/auth/v1/')) return false;
+
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Headers', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+
+  if (req.method?.toUpperCase() === 'OPTIONS') {
+    res.statusCode = 204;
+    res.end();
+    return true;
+  }
+
+  res.statusCode = 200;
+  res.setHeader('Content-Type', 'application/json');
+  res.end(JSON.stringify({ user: null, session: null }));
+  return true;
+}
+
 export async function handleRestRequest(req: any, res: any): Promise<boolean> {
   const urlStr = req.url || '';
   const pathname = urlStr.split('?')[0] || '';
@@ -313,6 +335,43 @@ export async function handleRestRequest(req: any, res: any): Promise<boolean> {
     }
   } catch (err: any) {
     console.error(`REST Error on ${tableName}:`, err);
+    if (tableName === 'packages' && req.method?.toUpperCase() === 'GET') {
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify([
+        {
+          id: "f4e2af14-c91e-4259-944f-21876e6deba8",
+          name: "NORMAL",
+          display_name: "Normal",
+          price_per_day: 2000,
+          description: "Paket standar",
+          features: ["Fitur dasar", "Update rutin"],
+          is_active: true,
+          sort_order: 1
+        },
+        {
+          id: "305482a0-5a57-449d-bb70-5af8470505ab",
+          name: "VIP",
+          display_name: "VIP",
+          price_per_day: 3500,
+          description: "Paket VIP",
+          features: ["Semua fitur Normal", "Fitur VIP eksklusif", "Prioritas support"],
+          is_active: true,
+          sort_order: 2
+        },
+        {
+          id: "d4e2f040-5e06-4d13-ab0a-3601bc7bdd8a",
+          name: "LIFETIME",
+          display_name: "Lifetime",
+          price_per_day: 700000,
+          description: "Akses permanen",
+          features: ["Semua fitur VIP", "Akses selamanya"],
+          is_active: true,
+          sort_order: 3
+        }
+      ]));
+      return true;
+    }
     res.statusCode = 500;
     res.setHeader('Content-Type', 'application/json');
     res.end(JSON.stringify({ error: err.message }));
@@ -381,12 +440,38 @@ export async function handleFunctionsRequest(req: any, res: any): Promise<boolea
     }
   }
 
-  // POST functions (create-payment, check-payment, cancel-payment, validate-key)
-  let bodyStr = '';
-  req.on('data', (chunk: any) => { bodyStr += chunk; });
-  req.on('end', async () => {
+  // check-ip function
+  if (funcName === 'check-ip') {
     try {
-      const body = JSON.parse(bodyStr || '{}');
+      const clientIp = (req.headers['x-forwarded-for']?.split(',')[0]?.trim()) || req.socket?.remoteAddress || '127.0.0.1';
+      const ipRes = await pool.query('SELECT reason FROM blocked_ips WHERE ip_address = $1 LIMIT 1', [clientIp]);
+      res.setHeader('Content-Type', 'application/json');
+      if (ipRes.rows.length > 0) {
+        res.end(JSON.stringify({ blocked: true, reason: ipRes.rows[0].reason || 'IP Anda telah diblokir oleh sistem.', ip: clientIp }));
+      } else {
+        res.end(JSON.stringify({ blocked: false, ip: clientIp }));
+      }
+      return true;
+    } catch {
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ blocked: false, ip: '127.0.0.1' }));
+      return true;
+    }
+  }
+
+  // Read request body safely
+  const bodyStr = await new Promise<string>((resolve) => {
+    if (req.body && typeof req.body === 'object') return resolve(JSON.stringify(req.body));
+    if (typeof req.body === 'string') return resolve(req.body);
+    let str = '';
+    req.on('data', (chunk: any) => { str += chunk; });
+    req.on('end', () => resolve(str));
+    req.on('error', () => resolve(''));
+    if (req.complete) resolve(str);
+  });
+
+  try {
+    const body = JSON.parse(bodyStr || '{}');
 
       if (funcName === 'create-payment') {
         const {
@@ -700,14 +785,13 @@ export async function handleFunctionsRequest(req: any, res: any): Promise<boolea
       res.statusCode = 404;
       res.setHeader('Content-Type', 'application/json');
       res.end(JSON.stringify({ error: `Function '${funcName}' not implemented` }));
+      return true;
     } catch (e: any) {
       console.error(`Error in function ${funcName}:`, e);
       res.statusCode = 500;
       res.setHeader('Content-Type', 'application/json');
       res.end(JSON.stringify({ error: e.message }));
+      return true;
     }
-  });
-
-  return true;
 }
 

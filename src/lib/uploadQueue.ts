@@ -70,8 +70,8 @@ export const readFileWithProgress = (file: File, onProgress: (pct: number) => vo
     reader.readAsText(file);
   });
 
-const REST_URL = `${(import.meta.env.VITE_SUPABASE_URL as string) || (supabase as any).supabaseUrl}/rest/v1`;
-const API_KEY = (import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string) || (supabase as any).supabaseKey;
+const REST_URL = '/rest/v1';
+const API_KEY = 'cloudsql-postgres-client-key';
 
 /** Send a row write to lua_scripts via XHR so we get real upload progress. */
 export const writeLuaScript = async (

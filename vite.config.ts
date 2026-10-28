@@ -2,7 +2,7 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react-swc";
 import path from "path";
 import { componentTagger } from "lovable-tagger";
-import { handleRestRequest, handleFunctionsRequest } from "./src/server/cloudsqlRouter.ts";
+import { handleRestRequest, handleFunctionsRequest, handleAuthRequest } from "./src/server/cloudsqlRouter.ts";
 import { createPool } from "./src/db/index.ts";
 
 function publicRawScriptPlugin() {
@@ -14,7 +14,8 @@ function publicRawScriptPlugin() {
           req.url = req.url.replace(/^\/supabase-proxy/, '');
         }
 
-        // Direct Cloud SQL REST and Functions API
+        // Handle auth, REST, and Functions API
+        if (handleAuthRequest(req, res)) return;
         if (await handleRestRequest(req, res)) return;
         if (await handleFunctionsRequest(req, res)) return;
 
