@@ -140,6 +140,40 @@ export const PaymentGatewaySettings: FC<PaymentGatewaySettingsProps> = ({ onSett
     }
   };
 
+  const saveMultipleSettings = async (items: { key: string; value: string }[]) => {
+    try {
+      const upserts = items.map(item => ({
+        key: item.key,
+        value: item.value,
+        updated_at: new Date().toISOString()
+      }));
+
+      setSettingsMap(prev => {
+        const next = { ...prev };
+        items.forEach(u => { next[u.key] = u.value; });
+        return next;
+      });
+
+      const { error } = await supabase
+        .from('app_settings')
+        .upsert(upserts, { onConflict: 'key' });
+
+      if (error) throw error;
+
+      toast({
+        title: 'Konfigurasi Gateway Disimpan',
+        description: 'Pilihan gateway aktif berhasil diperbarui di database.',
+      });
+
+      onSettingsUpdated?.();
+    } catch (err: any) {
+      toast({
+        title: 'Pengaturan Disimpan (Lokal)',
+        description: `Disimpan di cache browser. ${err?.message ? `(${err.message})` : ''}`,
+      });
+    }
+  };
+
   const copyToClipboard = (text: string, label: string) => {
     navigator.clipboard.writeText(text);
     setCopiedKey(label);
@@ -411,10 +445,63 @@ export const PaymentGatewaySettings: FC<PaymentGatewaySettingsProps> = ({ onSett
   const currentOrigin = typeof window !== 'undefined' ? window.location.origin : '';
   const webhookUrl = `${currentOrigin}/functions/v1/payment-webhook`;
 
-  // Resolved values
-  const rawGateway = getValue('payment_gateway', 'poketo');
-  const currentGateway = (rawGateway === 'casaku' || rawGateway === 'cashify') ? 'arexanspay' : (rawGateway === 'pakasir' ? 'xmpayment' : rawGateway);
+  // Resolved values & multi-gateway parsing
   const isSimulationOn = getValue('payment_simulation') === 'on';
+
+  const parseGateways = (rawVal?: string, legVal?: string): string[] => {
+    if (rawVal) {
+      try {
+        const parsed = JSON.parse(rawVal);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      } catch {}
+    }
+    const leg = (legVal || '').toLowerCase();
+    if (leg === 'both') return ['arexanspay', 'xmpayment'];
+    if (leg === 'all') return ['arexanspay', 'xmpayment', 'poketo'];
+    if (leg.includes(',')) return leg.split(',').map(s => s.trim());
+    if (leg === 'arexanspay' || leg === 'casaku' || leg === 'cashify') return ['arexanspay'];
+    if (leg === 'xmpayment' || leg === 'pakasir') return ['xmpayment'];
+    if (leg === 'poketo') return ['poketo'];
+    return ['arexanspay', 'xmpayment', 'poketo'];
+  };
+
+  const enabledGateways = parseGateways(getValue('enabled_gateways'), getValue('payment_gateway', 'all'));
+  const isArexansPayEnabled = enabledGateways.includes('arexanspay');
+  const isXmpEnabled = enabledGateways.includes('xmpayment');
+  const isPoketoEnabled = enabledGateways.includes('poketo');
+
+  // Check admin device heartbeat for ArexansPay (Payment 1)
+  const devLastSeen = parseInt(getValue('developer_last_seen', '0'), 10);
+  const isDevPhoneOnline = !!devLastSeen && (Date.now() - devLastSeen < 3 * 60 * 1000);
+
+  const toggleGateway = async (gatewayId: 'arexanspay' | 'xmpayment' | 'poketo') => {
+    let nextList: string[];
+    if (enabledGateways.includes(gatewayId)) {
+      if (enabledGateways.length <= 1) {
+        toast({
+          title: 'Tidak Bisa Menonaktifkan',
+          description: 'Minimal 1 gateway harus tetap aktif agar pembeli bisa bertransaksi.',
+          variant: 'destructive',
+        });
+        return;
+      }
+      nextList = enabledGateways.filter(g => g !== gatewayId);
+    } else {
+      nextList = [...enabledGateways, gatewayId];
+    }
+
+    await saveMultipleSettings([
+      { key: 'enabled_gateways', value: JSON.stringify(nextList) },
+      { key: 'payment_gateway', value: nextList.length === 3 ? 'all' : nextList.join(',') },
+    ]);
+  };
+
+  const setGatewaysPreset = async (list: string[]) => {
+    await saveMultipleSettings([
+      { key: 'enabled_gateways', value: JSON.stringify(list) },
+      { key: 'payment_gateway', value: list.length === 3 ? 'all' : list.join(',') },
+    ]);
+  };
 
   const poketoApiKey = getValue('poketo_api_key', 'sk_live_iZEBli3dV1buw_sFB4DhUfIDVKGp-itZ');
   const poketoWebhookKey = getValue('poketo_webhook_key', 'whsec_b71_8KfymmRPeNNQP2wigV2jshWTrC-X');
@@ -441,135 +528,195 @@ export const PaymentGatewaySettings: FC<PaymentGatewaySettingsProps> = ({ onSett
 
   return (
     <div className="space-y-6">
-      {/* 1. Master Gateway Switch & Simulation Mode */}
+      {/* 1. Master Multi-Gateway Activation Switch & Simulation Mode */}
       <Card className="glass-card border-primary/20 bg-background/60 shadow-lg">
         <CardHeader className="pb-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
               <CardTitle className="text-xl font-display font-bold flex items-center gap-2 text-foreground">
                 <CreditCard className="w-5 h-5 text-primary" />
-                Mode & Gateway Aktif
+                Pilihan Payment Gateway (Multi-Aktif)
               </CardTitle>
               <CardDescription className="text-xs">
-                Pilih payment gateway utama untuk melayani pembayaran QRIS & Invoice otomatis.
+                Aktifkan 1, 2, atau ketiganya sekaligus. Saat pembelian paket, pembeli akan disuruh memilih antara Payment 1, 2, atau 3.
               </CardDescription>
             </div>
-            <div className="flex items-center gap-2">
-              <span className={`text-xs px-2.5 py-1 rounded-full font-semibold ${
-                currentGateway === 'poketo'
-                  ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
-                  : currentGateway === 'both' 
-                  ? 'bg-purple-500/15 text-purple-400 border border-purple-500/30'
-                  : currentGateway === 'arexanspay'
-                  ? 'bg-cyan-500/15 text-cyan-400 border border-cyan-500/30'
-                  : 'bg-indigo-500/15 text-indigo-400 border border-indigo-500/30'
-              }`}>
-                {currentGateway === 'poketo' ? 'Poketo.id Aktif (Rekomendasi)' : currentGateway === 'xmpayment' ? 'XMPayment Aktif' : currentGateway === 'arexanspay' ? 'ArexansPay Aktif' : 'Dual Gateway Aktif'}
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-xs px-2.5 py-1 rounded-full font-semibold bg-primary/15 text-primary border border-primary/30">
+                {enabledGateways.length} dari 3 Gateway Aktif
               </span>
             </div>
           </div>
         </CardHeader>
         <CardContent className="space-y-5">
-          {/* Gateway Selector Buttons */}
-          <div>
-            <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2 block">
-              Pilihan Gateway Pembayaran
-            </Label>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-              <button
-                type="button"
-                onClick={() => saveSetting('payment_gateway', 'poketo')}
-                className={`p-4 rounded-xl border text-left transition-all duration-200 flex flex-col justify-between relative ${
-                  currentGateway === 'poketo'
-                    ? 'border-emerald-500 bg-emerald-500/10 text-foreground ring-1 ring-emerald-500 shadow-md'
-                    : 'border-border/60 bg-muted/30 hover:border-emerald-500/40 text-muted-foreground'
-                }`}
-              >
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="font-bold text-sm text-foreground flex items-center gap-1.5">
-                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-                      Poketo.id (Utama)
+          {/* Quick Preset Buttons */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs text-muted-foreground font-medium">Preset Cepat:</span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setGatewaysPreset(['arexanspay', 'xmpayment', 'poketo'])}
+              className={`text-xs h-7 px-3 ${enabledGateways.length === 3 ? 'border-primary text-primary bg-primary/10' : ''}`}
+            >
+              Aktifkan Ketiganya (1, 2 &amp; 3)
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setGatewaysPreset(['arexanspay', 'xmpayment'])}
+              className={`text-xs h-7 px-3 ${enabledGateways.length === 2 && !isPoketoEnabled ? 'border-primary text-primary bg-primary/10' : ''}`}
+            >
+              Hanya Payment 1 &amp; 2
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setGatewaysPreset(['poketo'])}
+              className={`text-xs h-7 px-3 ${enabledGateways.length === 1 && isPoketoEnabled ? 'border-primary text-primary bg-primary/10' : ''}`}
+            >
+              Hanya Payment 3 (Poketo)
+            </Button>
+          </div>
+
+          {/* 3 Gateway Multi-Toggle Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
+            {/* Payment 1: ArexansPay */}
+            <div
+              className={`p-4 rounded-xl border transition-all duration-200 flex flex-col justify-between relative ${
+                isArexansPayEnabled
+                  ? 'border-cyan-500/60 bg-cyan-500/10 text-foreground ring-1 ring-cyan-500/40 shadow-sm'
+                  : 'border-border/60 bg-muted/20 opacity-70 text-muted-foreground'
+              }`}
+            >
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold text-sm text-foreground">
+                      Payment 1: ArexansPay
                     </span>
-                    <Radio className={`w-4 h-4 ${currentGateway === 'poketo' ? 'text-emerald-400' : 'text-muted-foreground/40'}`} />
                   </div>
-                  <p className="text-xs text-muted-foreground">
-                    QRIS Instan, Virtual Account (10 Bank), PayLater & Kartu Debit via pay.poketo.id.
-                  </p>
+                  <Switch
+                    checked={isArexansPayEnabled}
+                    onCheckedChange={() => toggleGateway('arexanspay')}
+                  />
                 </div>
-                <div className="mt-3 flex items-center gap-1.5 text-[11px] text-emerald-400">
-                  <ExternalLink className="w-3 h-3" /> Multi-Metode Lengkap
-                </div>
-              </button>
 
-              <button
-                type="button"
-                onClick={() => saveSetting('payment_gateway', 'xmpayment')}
-                className={`p-4 rounded-xl border text-left transition-all duration-200 flex flex-col justify-between relative ${
-                  currentGateway === 'xmpayment'
-                    ? 'border-indigo-500 bg-indigo-500/10 text-foreground ring-1 ring-indigo-500 shadow-md'
-                    : 'border-border/60 bg-muted/30 hover:border-indigo-500/40 text-muted-foreground'
-                }`}
-              >
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="font-bold text-sm text-foreground">XMPayment</span>
-                    <Radio className={`w-4 h-4 ${currentGateway === 'xmpayment' ? 'text-indigo-400' : 'text-muted-foreground/40'}`} />
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    QRIS Otomatis & Cek Saldo Realtime via API xmpayment.my.id.
-                  </p>
+                {/* Heartbeat Status Phone indicator */}
+                <div className="mb-2.5">
+                  <span
+                    className={`inline-flex items-center gap-1.5 text-[11px] px-2.5 py-0.5 rounded-full font-medium ${
+                      isDevPhoneOnline
+                        ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                        : 'bg-red-500/20 text-red-400 border border-red-500/30'
+                    }`}
+                  >
+                    <span
+                      className={`w-1.5 h-1.5 rounded-full ${
+                        isDevPhoneOnline ? 'bg-emerald-400 animate-pulse' : 'bg-red-400'
+                      }`}
+                    />
+                    {isDevPhoneOnline
+                      ? 'HP Admin Online (Aktif Data)'
+                      : 'HP Admin Offline (Mati/Tanpa Data)'}
+                  </span>
                 </div>
-                <div className="mt-3 flex items-center gap-1.5 text-[11px] text-indigo-400">
-                  <ExternalLink className="w-3 h-3" /> https://xmpayment.my.id/dashboard/docs
-                </div>
-              </button>
 
-              <button
-                type="button"
-                onClick={() => saveSetting('payment_gateway', 'arexanspay')}
-                className={`p-4 rounded-xl border text-left transition-all duration-200 flex flex-col justify-between relative ${
-                  currentGateway === 'arexanspay'
-                    ? 'border-cyan-500 bg-cyan-500/10 text-foreground ring-1 ring-cyan-500 shadow-md'
-                    : 'border-border/60 bg-muted/30 hover:border-cyan-500/40 text-muted-foreground'
-                }`}
-              >
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="font-bold text-sm text-foreground">ArexansPay</span>
-                    <Radio className={`w-4 h-4 ${currentGateway === 'arexanspay' ? 'text-cyan-400' : 'text-muted-foreground/40'}`} />
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    QRIS Realtime via API arexanspay.id v2 dengan kode unik otomatis.
-                  </p>
-                </div>
-                <div className="mt-3 flex items-center gap-1.5 text-[11px] text-cyan-400">
-                  <ExternalLink className="w-3 h-3" /> https://www.arexanspay.my.id/docs
-                </div>
-              </button>
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  QRIS Realtime ArexansPay. <strong>Hanya muncul saat HP admin online aktif data</strong>. Bila HP mati/tanpa internet, otomatis tidak muncul / berstatus offline di checkout pembeli.
+                </p>
+              </div>
 
-              <button
-                type="button"
-                onClick={() => saveSetting('payment_gateway', 'both')}
-                className={`p-4 rounded-xl border text-left transition-all duration-200 flex flex-col justify-between relative ${
-                  currentGateway === 'both'
-                    ? 'border-purple-500 bg-purple-500/10 text-foreground ring-1 ring-purple-500 shadow-md'
-                    : 'border-border/60 bg-muted/30 hover:border-purple-500/40 text-muted-foreground'
-                }`}
-              >
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="font-bold text-sm text-foreground">Keduanya (Dual)</span>
-                    <Radio className={`w-4 h-4 ${currentGateway === 'both' ? 'text-purple-400' : 'text-muted-foreground/40'}`} />
+              <div className="mt-3 pt-2.5 border-t border-border/40 flex items-center justify-between text-[11px]">
+                <span className="text-cyan-400 font-mono">QRIS Instan (No Fee)</span>
+                <span className={`font-semibold ${isArexansPayEnabled ? 'text-cyan-400' : 'text-muted-foreground'}`}>
+                  {isArexansPayEnabled ? 'AKTIF' : 'NONAKTIF'}
+                </span>
+              </div>
+            </div>
+
+            {/* Payment 2: XMPayment */}
+            <div
+              className={`p-4 rounded-xl border transition-all duration-200 flex flex-col justify-between relative ${
+                isXmpEnabled
+                  ? 'border-indigo-500/60 bg-indigo-500/10 text-foreground ring-1 ring-indigo-500/40 shadow-sm'
+                  : 'border-border/60 bg-muted/20 opacity-70 text-muted-foreground'
+              }`}
+            >
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold text-sm text-foreground">
+                      Payment 2: XMPayment
+                    </span>
                   </div>
-                  <p className="text-xs text-muted-foreground">
-                    Pelanggan dapat memilih antara XMPayment atau ArexansPay.
-                  </p>
+                  <Switch
+                    checked={isXmpEnabled}
+                    onCheckedChange={() => toggleGateway('xmpayment')}
+                  />
                 </div>
-                <div className="mt-3 text-[11px] text-purple-400">
-                  Dual Fallback Mode
+
+                <div className="mb-2.5">
+                  <span className="inline-flex items-center gap-1.5 text-[11px] px-2.5 py-0.5 rounded-full font-medium bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                    Online (Server Cloud 24/7)
+                  </span>
                 </div>
-              </button>
+
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  QRIS Otomatis dengan kode unik dan verifikasi mutasi realtime via API xmpayment.my.id. Selalu siap melayani transaksi pembeli.
+                </p>
+              </div>
+
+              <div className="mt-3 pt-2.5 border-t border-border/40 flex items-center justify-between text-[11px]">
+                <span className="text-indigo-400 font-mono">QRIS Otomatis Realtime</span>
+                <span className={`font-semibold ${isXmpEnabled ? 'text-indigo-400' : 'text-muted-foreground'}`}>
+                  {isXmpEnabled ? 'AKTIF' : 'NONAKTIF'}
+                </span>
+              </div>
+            </div>
+
+            {/* Payment 3: Poketo */}
+            <div
+              className={`p-4 rounded-xl border transition-all duration-200 flex flex-col justify-between relative ${
+                isPoketoEnabled
+                  ? 'border-emerald-500/60 bg-emerald-500/10 text-foreground ring-1 ring-emerald-500/40 shadow-sm'
+                  : 'border-border/60 bg-muted/20 opacity-70 text-muted-foreground'
+              }`}
+            >
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold text-sm text-foreground">
+                      Payment 3: Poketo.id
+                    </span>
+                  </div>
+                  <Switch
+                    checked={isPoketoEnabled}
+                    onCheckedChange={() => toggleGateway('poketo')}
+                  />
+                </div>
+
+                <div className="mb-2.5">
+                  <span className="inline-flex items-center gap-1.5 text-[11px] px-2.5 py-0.5 rounded-full font-medium bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                    Online Min. Rp 10.000
+                  </span>
+                </div>
+
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  Multi-Metode Lengkap: QRIS Instan, Virtual Account 10 Bank, PayLater &amp; Kartu Debit. <strong>Hanya online ketika orderan minimal Rp 10.000</strong>.
+                </p>
+              </div>
+
+              <div className="mt-3 pt-2.5 border-t border-border/40 flex items-center justify-between text-[11px]">
+                <span className="text-emerald-400 font-mono">Multi-Metode Lengkap</span>
+                <span className={`font-semibold ${isPoketoEnabled ? 'text-emerald-400' : 'text-muted-foreground'}`}>
+                  {isPoketoEnabled ? 'AKTIF' : 'NONAKTIF'}
+                </span>
+              </div>
             </div>
           </div>
 

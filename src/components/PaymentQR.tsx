@@ -1,8 +1,12 @@
-import { FC, useState, useEffect } from 'react';
+import { FC, useState, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { 
   Copy, MessageCircle, AlertCircle, RefreshCw,
-  QrCode, Building2, CreditCard, Zap, CheckCircle2, Download, Smartphone, ShieldCheck, ChevronDown, ChevronUp, Loader2
+  QrCode, Building2, CreditCard, Zap, CheckCircle2, Download,
+  ExternalLink, ShieldCheck, ChevronDown, ChevronUp, Loader2,
+  Lock, Check, ArrowRight
 } from 'lucide-react';
 import GlobalBackground from './GlobalBackground';
 import { supabase } from '@/integrations/supabase/client';
@@ -18,7 +22,7 @@ interface SocialLink {
 }
 
 interface PaymentQRProps {
-  packageName: 'NORMAL' | 'VIP' | 'LIFETIME';
+  packageName: 'NORMAL' | 'VIP' | 'LIFETIME' | string;
   paymentData: {
     transactionId: string;
     qr_string: string;
@@ -55,6 +59,20 @@ interface VaPaymentInfo {
   };
 }
 
+interface AkulakuPaymentInfo {
+  checkoutUrl: string;
+  amount: number;
+  feeGateway?: number;
+  invoiceNumber?: string;
+}
+
+interface CardPaymentInfo {
+  paymentUrl: string;
+  amount: number;
+  feeGateway?: number;
+  invoiceNumber?: string;
+}
+
 const DEFAULT_VA_BANKS = [
   { code: 'BRI', name: 'Bank BRI' },
   { code: 'BNI', name: 'Bank BNI' },
@@ -78,7 +96,9 @@ const PaymentQR: FC<PaymentQRProps> = ({
   onRecheck,
   formatRupiah
 }) => {
-  const isPoketo = paymentData.isPoketo ?? (paymentData.gateway === 'poketo' || paymentData.totalAmount >= 10000);
+  const isPoketo = paymentData.gateway === 'poketo' || (Boolean(paymentData.isPoketo) && paymentData.gateway !== 'arexanspay' && paymentData.gateway !== 'xmpayment');
+  const slug = paymentData.slug || (paymentData.payment_url ? paymentData.payment_url.split('/inv/')[1] : '');
+
   const [activeTab, setActiveTab] = useState<PaymentTab>('qris');
   const [showContactHint, setShowContactHint] = useState(false);
   const [contactLink, setContactLink] = useState<SocialLink | null>(null);
@@ -86,6 +106,7 @@ const PaymentQR: FC<PaymentQRProps> = ({
   const [recheckMsg, setRecheckMsg] = useState('');
   const [copiedQris, setCopiedQris] = useState(false);
   const [copiedVa, setCopiedVa] = useState(false);
+  const [copiedPaylaterUrl, setCopiedPaylaterUrl] = useState(false);
 
   // VA State
   const [selectedBank, setSelectedBank] = useState<string>('BRI');
@@ -94,16 +115,43 @@ const PaymentQR: FC<PaymentQRProps> = ({
   const [activeInstructionChannel, setActiveInstructionChannel] = useState<string>('');
   const [expandedInstructions, setExpandedInstructions] = useState(false);
 
-  // Fetch VA when user switches to VA tab or changes bank
+  // PayLater (Akulaku) State
+  const [akulakuLoading, setAkulakuLoading] = useState(false);
+  const [akulakuData, setAkulakuData] = useState<AkulakuPaymentInfo | null>(null);
+  const [akulakuPayer, setAkulakuPayer] = useState({
+    name: paymentData.transactionId.startsWith('AXS-') ? paymentData.transactionId : 'Pembeli Arexans',
+    phone: '08123456789',
+    address: 'Jl. Merdeka No. 1',
+    city: 'Jakarta Selatan',
+    state: 'DKI Jakarta',
+    postcode: '12190',
+  });
+
+  // Card State
+  const [cardLoading, setCardLoading] = useState(false);
+  const [cardData, setCardData] = useState<CardPaymentInfo | null>(null);
+
+  // Calculate current active amount
+  const getTabAmount = () => {
+    if (activeTab === 'va' && vaData) return vaData.amount;
+    if (activeTab === 'va' && paymentData.quotes?.VA?.totalAmount) return paymentData.quotes.VA.totalAmount;
+    if (activeTab === 'paylater' && akulakuData) return akulakuData.amount;
+    if (activeTab === 'paylater' && paymentData.quotes?.AKULAKU?.totalAmount) return paymentData.quotes.AKULAKU.totalAmount;
+    if (activeTab === 'card' && cardData) return cardData.amount;
+    if (activeTab === 'card' && paymentData.quotes?.CARD?.totalAmount) return paymentData.quotes.CARD.totalAmount;
+    if (activeTab === 'qris' && paymentData.quotes?.QRIS?.totalAmount) return paymentData.quotes.QRIS.totalAmount;
+    return paymentData.totalAmount;
+  };
+
+  // 1. Fetch VA Handler
   const handleSelectBank = async (bankCode: string) => {
     setSelectedBank(bankCode);
-    const slug = paymentData.slug || (paymentData.payment_url ? paymentData.payment_url.split('/inv/')[1] : '');
     if (!slug) return;
 
     setVaLoading(true);
     try {
-      const res = await supabase.functions.invoke('poketo-va', {
-        body: { slug, bank: bankCode }
+      const res = await supabase.functions.invoke('poketo-pay', {
+        body: { slug, channel: 'VA', bank: bankCode }
       });
 
       if (res?.data?.success && res.data.payment) {
@@ -126,11 +174,123 @@ const PaymentQR: FC<PaymentQRProps> = ({
     }
   };
 
+  // Auto-fetch VA on switching to VA tab
   useEffect(() => {
     if (activeTab === 'va' && !vaData && isPoketo) {
       handleSelectBank('BRI');
     }
   }, [activeTab, isPoketo]);
+
+  // 2. Fetch PayLater Akulaku Handler
+  const handleInitAkulaku = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!slug) return;
+
+    // Validate 5 digit postal code
+    const rawPostcode = akulakuPayer.postcode.replace(/\D/g, '');
+    const cleanPostcode = rawPostcode.length === 5 ? rawPostcode : '12190';
+
+    setAkulakuLoading(true);
+    try {
+      const res = await supabase.functions.invoke('poketo-pay', {
+        body: {
+          slug,
+          channel: 'AKULAKU',
+          payer: {
+            ...akulakuPayer,
+            postcode: cleanPostcode,
+          }
+        }
+      });
+
+      if (res?.data?.success && res.data.payment) {
+        setAkulakuData(res.data.payment);
+        toast({
+          title: 'Pembayaran Akulaku Siap',
+          description: 'Silakan klik tombol bayar untuk menyelesaikan cicilan di Akulaku.',
+        });
+      } else {
+        toast({
+          title: 'Gagal Menyiapkan Akulaku',
+          description: res?.data?.error || 'Pastikan data nama, no HP, dan alamat sudah terisi.',
+          variant: 'destructive',
+        });
+      }
+    } catch (err: any) {
+      toast({
+        title: 'Error Akulaku',
+        description: err.message || 'Terjadi kesalahan sistem.',
+        variant: 'destructive',
+      });
+    } finally {
+      setAkulakuLoading(false);
+    }
+  };
+
+  // 3. Fetch Card Handler
+  const handleInitCard = async () => {
+    if (!slug) return;
+
+    setCardLoading(true);
+    try {
+      const res = await supabase.functions.invoke('poketo-pay', {
+        body: { slug, channel: 'CARD' }
+      });
+
+      if (res?.data?.success && res.data.payment) {
+        setCardData(res.data.payment);
+        toast({
+          title: 'Halaman Kartu Siap',
+          description: 'Halaman 3D Secure bank siap dibuka untuk otorisasi.',
+        });
+      } else {
+        toast({
+          title: 'Gagal Memproses Kartu',
+          description: res?.data?.error || 'Gagal menyiapkan halaman pembayaran kartu.',
+          variant: 'destructive',
+        });
+      }
+    } catch (err: any) {
+      toast({
+        title: 'Error Kartu',
+        description: err.message || 'Terjadi kesalahan sistem.',
+        variant: 'destructive',
+      });
+    } finally {
+      setCardLoading(false);
+    }
+  };
+
+  // Auto-init card if user opens card tab and not loaded yet
+  useEffect(() => {
+    if (activeTab === 'card' && !cardData && isPoketo) {
+      handleInitCard();
+    }
+  }, [activeTab, isPoketo]);
+
+  // 4. Realtime status poll for Poketo (detect payment across ANY method)
+  const isPaidRef = useRef(false);
+  useEffect(() => {
+    if (!isPoketo || !slug) return;
+
+    const pollStatus = async () => {
+      if (isPaidRef.current) return;
+      try {
+        const res = await supabase.functions.invoke('poketo-pay', {
+          body: { slug, channel: 'STATUS', transactionId: paymentData.transactionId }
+        });
+        if (res?.data?.paid || res?.data?.status === 'PAID') {
+          isPaidRef.current = true;
+          if (onRecheck) onRecheck();
+        }
+      } catch (e) {
+        // quiet poll
+      }
+    };
+
+    const interval = setInterval(pollStatus, 3000);
+    return () => clearInterval(interval);
+  }, [isPoketo, slug, paymentData.transactionId, onRecheck]);
 
   const handleRecheck = async () => {
     if (!onRecheck || rechecking) return;
@@ -138,7 +298,7 @@ const PaymentQR: FC<PaymentQRProps> = ({
     setRecheckMsg('');
     try {
       await onRecheck();
-      setRecheckMsg('Status diperbarui. Jika pembayaran berhasil, halaman akan otomatis lanjut.');
+      setRecheckMsg('Status dicek realtime. Jika Anda telah membayar, halaman otomatis selesai.');
     } finally {
       setTimeout(() => setRechecking(false), 1500);
       setTimeout(() => setRecheckMsg(''), 5000);
@@ -192,8 +352,15 @@ const PaymentQR: FC<PaymentQRProps> = ({
   const copyVaNumber = (va: string) => {
     navigator.clipboard.writeText(va);
     setCopiedVa(true);
-    toast({ title: 'Nomor VA Disalin!', description: `${va} siap digunakan di aplikasi m-banking/ATM.` });
+    toast({ title: 'Nomor VA Disalin!', description: `${va} siap digunakan di aplikasi m-banking atau ATM.` });
     setTimeout(() => setCopiedVa(false), 2500);
+  };
+
+  const copyPaylaterUrl = (url: string) => {
+    navigator.clipboard.writeText(url);
+    setCopiedPaylaterUrl(true);
+    toast({ title: 'Tautan Pembayaran Disalin!', description: 'Buka di browser Anda untuk menyelesaikan cicilan.' });
+    setTimeout(() => setCopiedPaylaterUrl(false), 2500);
   };
 
   const downloadQrCode = () => {
@@ -208,6 +375,8 @@ const PaymentQR: FC<PaymentQRProps> = ({
 
   const currentVaInstructions = vaData?.instructions?.id || [];
   const currentInstructionStep = currentVaInstructions.find(i => i.channel === activeInstructionChannel) || currentVaInstructions[0];
+
+  const officialPoketoUrl = paymentData.payment_url || (slug ? `https://pay.poketo.id/inv/${slug}` : undefined);
 
   return (
     <div className="min-h-screen flex items-center justify-center p-3 sm:p-4 bg-background relative overflow-hidden">
@@ -230,7 +399,7 @@ const PaymentQR: FC<PaymentQRProps> = ({
         </h2>
         <p className="text-muted-foreground text-xs sm:text-sm mt-1 mb-4">
           {isPoketo 
-            ? 'Pilih metode pembayaran langsung di bawah ini tanpa berpindah halaman'
+            ? 'Tersedia QRIS, Virtual Account Bank, PayLater Akulaku, dan Kartu Debit/Kredit'
             : 'Gateway ArexansPay & XMPayment · Scan instan semua e-wallet & mobile banking'}
         </p>
 
@@ -241,72 +410,96 @@ const PaymentQR: FC<PaymentQRProps> = ({
         )}
 
         {/* Amount Box */}
-        <div className={`p-4 rounded-xl mb-5 border ${roleTintClass} bg-card/60`}>
-          <p className="text-muted-foreground text-xs uppercase tracking-wider mb-1 font-medium">Total Tagihan Pembayaran</p>
+        <div className={`p-4 rounded-xl mb-4 border ${roleTintClass} bg-card/60`}>
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-muted-foreground text-xs uppercase tracking-wider font-medium">Total Tagihan Pembayaran</span>
+            {isPoketo && (
+              <span className="text-[10px] px-2 py-0.5 rounded bg-primary/20 text-primary font-bold">
+                {activeTab === 'qris' ? 'QRIS' : activeTab === 'va' ? 'VA Bank' : activeTab === 'paylater' ? 'Akulaku' : 'Kartu 3DS'}
+              </span>
+            )}
+          </div>
           <p className={`text-2xl sm:text-3xl font-display font-bold ${roleTextClass}`}>
-            {formatRupiah(activeTab === 'va' && vaData ? vaData.amount : paymentData.totalAmount)}
+            {formatRupiah(getTabAmount())}
           </p>
           <div className="flex items-center justify-center gap-2 mt-1.5 text-[11px] text-muted-foreground">
             <span className="inline-block w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-            <span>Verifikasi Realtime Otomatis · Tanpa Perlu Kirim Bukti</span>
+            <span>Verifikasi Otomatis Realtime · Tanpa Kirim Bukti</span>
           </div>
         </div>
 
         {/* Multi-Method Tabs ONLY for Poketo (>= Rp 10.000) */}
         {isPoketo ? (
-          <div className="grid grid-cols-4 gap-1.5 p-1 rounded-xl bg-muted/60 mb-5 border border-white/5 text-xs">
-            <button
-              type="button"
-              onClick={() => setActiveTab('qris')}
-              className={`py-2 px-1 rounded-lg font-semibold flex flex-col sm:flex-row items-center justify-center gap-1 transition-all ${
-                activeTab === 'qris' 
-                  ? 'bg-background text-primary shadow-sm border border-primary/20' 
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              <QrCode className="w-4 h-4" />
-              <span>QRIS</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab('va')}
-              className={`py-2 px-1 rounded-lg font-semibold flex flex-col sm:flex-row items-center justify-center gap-1 transition-all ${
-                activeTab === 'va' 
-                  ? 'bg-background text-primary shadow-sm border border-primary/20' 
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              <Building2 className="w-4 h-4" />
-              <span>VA Bank</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab('paylater')}
-              className={`py-2 px-1 rounded-lg font-semibold flex flex-col sm:flex-row items-center justify-center gap-1 transition-all ${
-                activeTab === 'paylater' 
-                  ? 'bg-background text-primary shadow-sm border border-primary/20' 
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              <Zap className="w-4 h-4" />
-              <span>PayLater</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab('card')}
-              className={`py-2 px-1 rounded-lg font-semibold flex flex-col sm:flex-row items-center justify-center gap-1 transition-all ${
-                activeTab === 'card' 
-                  ? 'bg-background text-primary shadow-sm border border-primary/20' 
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              <CreditCard className="w-4 h-4" />
-              <span>Kartu</span>
-            </button>
+          <div className="space-y-3 mb-5">
+            <div className="grid grid-cols-4 gap-1.5 p-1 rounded-xl bg-muted/60 border border-white/5 text-xs">
+              <button
+                type="button"
+                onClick={() => setActiveTab('qris')}
+                className={`py-2 px-1 rounded-lg font-semibold flex flex-col sm:flex-row items-center justify-center gap-1 transition-all ${
+                  activeTab === 'qris' 
+                    ? 'bg-background text-primary shadow-sm border border-primary/20' 
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                <QrCode className="w-4 h-4" />
+                <span>QRIS</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab('va')}
+                className={`py-2 px-1 rounded-lg font-semibold flex flex-col sm:flex-row items-center justify-center gap-1 transition-all ${
+                  activeTab === 'va' 
+                    ? 'bg-background text-primary shadow-sm border border-primary/20' 
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                <Building2 className="w-4 h-4" />
+                <span>VA Bank</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab('paylater')}
+                className={`py-2 px-1 rounded-lg font-semibold flex flex-col sm:flex-row items-center justify-center gap-1 transition-all ${
+                  activeTab === 'paylater' 
+                    ? 'bg-background text-primary shadow-sm border border-primary/20' 
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                <Zap className="w-4 h-4" />
+                <span>PayLater</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab('card')}
+                className={`py-2 px-1 rounded-lg font-semibold flex flex-col sm:flex-row items-center justify-center gap-1 transition-all ${
+                  activeTab === 'card' 
+                    ? 'bg-background text-primary shadow-sm border border-primary/20' 
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                <CreditCard className="w-4 h-4" />
+                <span>Kartu</span>
+              </button>
+            </div>
+
+            {/* Official Poketo Link Button */}
+            {officialPoketoUrl && (
+              <a
+                href={officialPoketoUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="w-full inline-flex items-center justify-center gap-1.5 py-1.5 px-3 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 text-xs font-medium transition"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                <span>Buka Halaman Resmi Pembayaran (pay.poketo.id)</span>
+              </a>
+            )}
           </div>
         ) : null}
 
-        {/* Tab 1: QRIS Instan */}
+        {/* ========================================================= */}
+        {/* TAB 1: QRIS INSTAN                                        */}
+        {/* ========================================================= */}
         {activeTab === 'qris' && (
           <div className="space-y-4 animate-fade-in">
             {/* QR Code container */}
@@ -360,7 +553,9 @@ const PaymentQR: FC<PaymentQRProps> = ({
           </div>
         )}
 
-        {/* Tab 2: Virtual Account Realtime (In-App Poketo) */}
+        {/* ========================================================= */}
+        {/* TAB 2: VIRTUAL ACCOUNT REALTIME (In-App Poketo)           */}
+        {/* ========================================================= */}
         {activeTab === 'va' && isPoketo && (
           <div className="space-y-4 text-left animate-fade-in p-4 rounded-xl bg-card/60 border border-border/60">
             <div>
@@ -465,56 +660,235 @@ const PaymentQR: FC<PaymentQRProps> = ({
           </div>
         )}
 
-        {/* Tab 3: PayLater */}
+        {/* ========================================================= */}
+        {/* TAB 3: PAYLATER (AKULAKU REALTIME)                        */}
+        {/* ========================================================= */}
         {activeTab === 'paylater' && isPoketo && (
           <div className="space-y-4 text-left animate-fade-in p-4 rounded-xl bg-card/60 border border-border/60">
-            <div className="flex items-center gap-2 text-foreground font-semibold text-sm border-b border-border/50 pb-2">
-              <Zap className="w-4 h-4 text-amber-400" />
-              <span>PayLater & Cicilan Realtime</span>
+            <div className="flex items-center justify-between border-b border-border/50 pb-2">
+              <div className="flex items-center gap-2 text-foreground font-semibold text-sm">
+                <Zap className="w-4 h-4 text-amber-400" />
+                <span>Akulaku PayLater & Cicilan</span>
+              </div>
+              <span className="text-[10px] text-emerald-400 font-bold bg-emerald-500/10 px-2 py-0.5 rounded">
+                Realtime
+              </span>
             </div>
 
             <p className="text-xs text-muted-foreground">
-              Beli sekarang bayar nanti dengan akun PayLater Anda (Akulaku & Kredivo).
+              Beli sekarang bayar nanti dengan Akulaku PayLater. Nikmati tenor 30 hari hingga cicilan 12 bulan.
             </p>
 
-            <div className="p-3 rounded-lg bg-muted/50 border border-white/5 space-y-1">
-              <div className="flex items-center justify-between">
-                <span className="font-bold text-foreground text-sm">Akulaku PayLater</span>
-                <span className="text-[10px] text-emerald-400 font-bold bg-emerald-500/10 px-2 py-0.5 rounded">Tersedia</span>
-              </div>
-              <p className="text-[11px] text-muted-foreground">
-                Tenor cicilan 30 hari, 3 bulan, 6 bulan, hingga 12 bulan sesuai limit akun Akulaku Anda.
-              </p>
-            </div>
+            {/* Generated Akulaku Checkout Box */}
+            {akulakuData ? (
+              <div className="space-y-3 p-4 rounded-xl bg-gradient-to-br from-amber-500/10 via-amber-500/5 to-transparent border border-amber-500/30">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-semibold text-foreground">Tagihan Akulaku Siap</span>
+                  <span className="font-mono text-amber-400 font-bold">{formatRupiah(akulakuData.amount)}</span>
+                </div>
+                
+                <p className="text-xs text-muted-foreground">
+                  Klik tombol di bawah untuk melanjutkan otorisasi pembayaran di portal resmi Akulaku:
+                </p>
 
-            <div className="p-3 rounded-lg bg-muted/50 border border-white/5 space-y-1">
-              <div className="flex items-center justify-between">
-                <span className="font-bold text-foreground text-sm">Kredivo</span>
-                <span className="text-[10px] text-emerald-400 font-bold bg-emerald-500/10 px-2 py-0.5 rounded">Tersedia</span>
+                <div className="space-y-2 pt-1">
+                  <a
+                    href={akulakuData.checkoutUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-amber-500 hover:bg-amber-600 text-black font-bold text-xs sm:text-sm shadow-lg shadow-amber-500/20 transition-all"
+                  >
+                    <span>Buka Akulaku (Bayar Sekarang)</span>
+                    <ExternalLink className="w-4 h-4" />
+                  </a>
+
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => copyPaylaterUrl(akulakuData.checkoutUrl)}
+                    className="w-full text-xs gap-1.5 border-amber-500/30 text-amber-400 hover:bg-amber-500/10"
+                  >
+                    {copiedPaylaterUrl ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span>{copiedPaylaterUrl ? 'Tautan Disalin!' : 'Salin Tautan Pembayaran'}</span>
+                  </Button>
+                </div>
+
+                <div className="flex items-center justify-center gap-2 p-2.5 rounded-lg bg-black/40 border border-white/5 text-[11px] text-muted-foreground">
+                  <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+                  <span>Menunggu pembayaran di Akulaku... Halaman otomatis selesai.</span>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setAkulakuData(null)}
+                  className="text-[11px] text-muted-foreground hover:text-foreground underline block text-center w-full pt-1"
+                >
+                  Ubah data pemesan
+                </button>
               </div>
-              <p className="text-[11px] text-muted-foreground">
-                Pembayaran cicilan instan tanpa kartu kredit langsung via akun Kredivo.
-              </p>
-            </div>
+            ) : (
+              /* Payer Information Form Required by Akulaku/Poketo */
+              <form onSubmit={handleInitAkulaku} className="space-y-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <div className="space-y-1">
+                    <Label className="text-[11px] text-muted-foreground">Nama Lengkap:</Label>
+                    <Input
+                      type="text"
+                      required
+                      value={akulakuPayer.name}
+                      onChange={e => setAkulakuPayer({ ...akulakuPayer, name: e.target.value })}
+                      placeholder="Nama Lengkap"
+                      className="h-8 text-xs bg-muted/40 border-border/60"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <Label className="text-[11px] text-muted-foreground">No HP / WhatsApp:</Label>
+                    <Input
+                      type="tel"
+                      required
+                      value={akulakuPayer.phone}
+                      onChange={e => setAkulakuPayer({ ...akulakuPayer, phone: e.target.value })}
+                      placeholder="08xxxxxxxxxx"
+                      className="h-8 text-xs bg-muted/40 border-border/60"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <Label className="text-[11px] text-muted-foreground">Alamat Lengkap:</Label>
+                  <Input
+                    type="text"
+                    required
+                    value={akulakuPayer.address}
+                    onChange={e => setAkulakuPayer({ ...akulakuPayer, address: e.target.value })}
+                    placeholder="Jl. Contoh No. 12"
+                    className="h-8 text-xs bg-muted/40 border-border/60"
+                  />
+                </div>
+
+                <div className="grid grid-cols-3 gap-2">
+                  <div className="space-y-1">
+                    <Label className="text-[10px] text-muted-foreground">Kota:</Label>
+                    <Input
+                      type="text"
+                      required
+                      value={akulakuPayer.city}
+                      onChange={e => setAkulakuPayer({ ...akulakuPayer, city: e.target.value })}
+                      placeholder="Jakarta"
+                      className="h-8 text-xs bg-muted/40 border-border/60"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <Label className="text-[10px] text-muted-foreground">Provinsi:</Label>
+                    <Input
+                      type="text"
+                      required
+                      value={akulakuPayer.state}
+                      onChange={e => setAkulakuPayer({ ...akulakuPayer, state: e.target.value })}
+                      placeholder="DKI Jakarta"
+                      className="h-8 text-xs bg-muted/40 border-border/60"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <Label className="text-[10px] text-muted-foreground">Kode Pos (5 digit):</Label>
+                    <Input
+                      type="text"
+                      maxLength={5}
+                      required
+                      value={akulakuPayer.postcode}
+                      onChange={e => setAkulakuPayer({ ...akulakuPayer, postcode: e.target.value.replace(/\D/g, '') })}
+                      placeholder="12190"
+                      className="h-8 text-xs font-mono bg-muted/40 border-border/60"
+                    />
+                  </div>
+                </div>
+
+                <Button
+                  type="submit"
+                  disabled={akulakuLoading}
+                  className="w-full mt-2 bg-amber-500 hover:bg-amber-600 text-black font-bold text-xs gap-1.5 shadow-md shadow-amber-500/20"
+                >
+                  {akulakuLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ArrowRight className="w-3.5 h-3.5" />}
+                  <span>{akulakuLoading ? 'Menghubungkan Akulaku...' : 'Lanjut Bayar dengan Akulaku'}</span>
+                </Button>
+              </form>
+            )}
           </div>
         )}
 
-        {/* Tab 4: Kartu Debit / Kredit */}
+        {/* ========================================================= */}
+        {/* TAB 4: KARTU DEBIT / KREDIT (VISA, MASTERCARD, JCB)       */}
+        {/* ========================================================= */}
         {activeTab === 'card' && isPoketo && (
           <div className="space-y-4 text-left animate-fade-in p-4 rounded-xl bg-card/60 border border-border/60">
-            <div className="flex items-center gap-2 text-foreground font-semibold text-sm border-b border-border/50 pb-2">
-              <CreditCard className="w-4 h-4 text-blue-400" />
-              <span>Kartu Debit & Kredit Visa / Mastercard</span>
+            <div className="flex items-center justify-between border-b border-border/50 pb-2">
+              <div className="flex items-center gap-2 text-foreground font-semibold text-sm">
+                <CreditCard className="w-4 h-4 text-blue-400" />
+                <span>Kartu Debit & Kredit</span>
+              </div>
+              <span className="text-[10px] text-blue-400 font-bold bg-blue-500/10 px-2 py-0.5 rounded flex items-center gap-1">
+                <Lock className="w-3 h-3" />
+                3D Secure
+              </span>
             </div>
 
             <p className="text-xs text-muted-foreground">
-              Pembayaran aman dengan kartu berlogo Visa, Mastercard, atau GPN yang terproteksi 3D Secure dengan OTP resmi bank.
+              Mendukung kartu debit dan kredit dengan logo <strong>Visa, Mastercard, JCB, atau GPN</strong>. Terproteksi OTP resmi dari bank penerbit.
             </p>
 
-            <div className="p-3 rounded-lg bg-muted/50 border border-white/5 flex items-center justify-between">
-              <span className="font-mono text-sm font-bold text-foreground">VISA / Mastercard / GPN</span>
-              <span className="text-[10px] text-emerald-400 font-bold bg-emerald-500/10 px-2 py-0.5 rounded">3D Secure</span>
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <span className="px-2.5 py-1 rounded bg-muted/80 font-mono font-bold text-foreground">VISA</span>
+              <span className="px-2.5 py-1 rounded bg-muted/80 font-mono font-bold text-foreground">Mastercard</span>
+              <span className="px-2.5 py-1 rounded bg-muted/80 font-mono font-bold text-foreground">JCB</span>
+              <span className="px-2.5 py-1 rounded bg-muted/80 font-mono font-bold text-foreground">GPN</span>
             </div>
+
+            {/* Generated Card Payment URL Box */}
+            {cardData ? (
+              <div className="space-y-3 p-4 rounded-xl bg-gradient-to-br from-blue-500/10 via-blue-500/5 to-transparent border border-blue-500/30">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-semibold text-foreground">Halaman 3D Secure Bank Siap</span>
+                  <span className="font-mono text-blue-400 font-bold">{formatRupiah(cardData.amount)}</span>
+                </div>
+
+                <p className="text-xs text-muted-foreground">
+                  Klik tombol di bawah untuk memasukkan nomor kartu & verifikasi kode OTP bank secara aman:
+                </p>
+
+                <div className="space-y-2 pt-1">
+                  <a
+                    href={cardData.paymentUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs sm:text-sm shadow-lg shadow-blue-500/20 transition-all"
+                  >
+                    <span>Buka Pembayaran Kartu (3D Secure)</span>
+                    <ExternalLink className="w-4 h-4" />
+                  </a>
+                </div>
+
+                <div className="flex items-center justify-center gap-2 p-2.5 rounded-lg bg-black/40 border border-white/5 text-[11px] text-muted-foreground">
+                  <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
+                  <span>Menunggu otorisasi OTP bank... Halaman ini otomatis mendeteksi saat selesai.</span>
+                </div>
+              </div>
+            ) : (
+              <div className="pt-2">
+                <Button
+                  type="button"
+                  onClick={handleInitCard}
+                  disabled={cardLoading}
+                  className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs gap-1.5 shadow-md shadow-blue-500/20"
+                >
+                  {cardLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Lock className="w-3.5 h-3.5" />}
+                  <span>{cardLoading ? 'Menyiapkan Pembayaran Kartu...' : 'Lanjut ke Pembayaran Kartu 3D Secure'}</span>
+                </Button>
+              </div>
+            )}
           </div>
         )}
 

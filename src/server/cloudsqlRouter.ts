@@ -568,24 +568,53 @@ export async function handleFunctionsRequest(req: any, res: any): Promise<boolea
 
         // Query settings for gateway preference and keys
         const settingsRes = await pool.query(
-          "SELECT key, value FROM app_settings WHERE key IN ('payment_gateway', 'poketo_api_key', 'poketo_webhook_key', 'arexanspay_api_key', 'arexanspay_qris_id', 'xmpayment_api_key')"
+          "SELECT key, value FROM app_settings WHERE key IN ('enabled_gateways', 'payment_gateway', 'poketo_api_key', 'poketo_webhook_key', 'arexanspay_api_key', 'arexanspay_qris_id', 'xmpayment_api_key')"
         );
         const settingsMap: Record<string, string> = {};
         (settingsRes.rows || []).forEach((r: any) => { settingsMap[r.key] = r.value; });
 
-        const activeGateway = (gateway || settingsMap.payment_gateway || 'poketo').toLowerCase();
         const poketoKey = settingsMap.poketo_api_key || 'sk_live_iZEBli3dV1buw_sFB4DhUfIDVKGp-itZ';
         const arexansApiKey = settingsMap.arexanspay_api_key || 'arexanspay_f63fa727bda01551084e5c87bde526aeb68e1c471ff89fa36d2748b8c25156a3';
         const arexansQrisId = settingsMap.arexanspay_qris_id || 'axspay-duqwono-h3sq-au0s-5h26-v7m2d1oy3c32';
         const xmpKey = settingsMap.xmpayment_api_key || 'xmp_live_d2b8ea709d5d7a57ff974cd771435e0f58d4da888593350b';
         const cleanCustName = customerName || 'Pelanggan Arexans';
 
-        // RULE: Pembayaran Poketo HANYA ketika minimal pembelian Rp 10.000.
-        // Di bawah Rp 10.000 gunakan ArexansPay dan XMPayment.
-        const isPoketoEligible = amount >= 10000;
+        // Parse enabled gateways from app_settings
+        let enabledGatewaysList: string[] = ['arexanspay', 'xmpayment', 'poketo'];
+        if (settingsMap.enabled_gateways) {
+          try {
+            const parsed = JSON.parse(settingsMap.enabled_gateways);
+            if (Array.isArray(parsed) && parsed.length > 0) enabledGatewaysList = parsed;
+          } catch {}
+        } else if (settingsMap.payment_gateway) {
+          const pg = settingsMap.payment_gateway.toLowerCase();
+          if (pg === 'both') enabledGatewaysList = ['arexanspay', 'xmpayment'];
+          else if (pg === 'all') enabledGatewaysList = ['arexanspay', 'xmpayment', 'poketo'];
+          else if (pg.includes(',')) enabledGatewaysList = pg.split(',').map(s => s.trim());
+          else enabledGatewaysList = [pg];
+        }
 
-        // 1. Jika amount >= 10.000: Gunakan Poketo (Realtime Multi-Metode: QRIS, VA, PayLater, Kartu)
-        if (isPoketoEligible && (activeGateway === 'poketo' || activeGateway === 'both' || !activeGateway)) {
+        // Determine target gateway:
+        // If client explicitly requested a gateway: use it!
+        // If not, pick suitable gateway from enabled list (Poketo if >= 10k and enabled, else arexanspay/xmpayment).
+        const requestedGateway = (gateway || '').toLowerCase().trim();
+        const isPoketoEligible = amount >= 10000;
+        let chosenGateway = requestedGateway;
+
+        if (!chosenGateway) {
+          if (isPoketoEligible && enabledGatewaysList.includes('poketo')) {
+            chosenGateway = 'poketo';
+          } else if (enabledGatewaysList.includes('arexanspay')) {
+            chosenGateway = 'arexanspay';
+          } else if (enabledGatewaysList.includes('xmpayment')) {
+            chosenGateway = 'xmpayment';
+          } else {
+            chosenGateway = enabledGatewaysList[0] || 'arexanspay';
+          }
+        }
+
+        // 1. GATEWAY: POKETO (Hanya online ketika orderan minimal 10.000)
+        if (chosenGateway === 'poketo' && isPoketoEligible) {
           try {
             const poketoResp = await fetch('https://poketo.id/api/v1/invoices', {
               method: 'POST',
@@ -649,14 +678,41 @@ export async function handleFunctionsRequest(req: any, res: any): Promise<boolea
               qrisUrl = `https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=${encodeURIComponent(qrString)}`;
             }
           } catch (pErr) {
-            console.warn('Poketo create invoice exception, fallback to Arexanspay:', pErr);
+            console.warn('Poketo create invoice exception, fallback:', pErr);
           }
         }
 
-        // 2. Jika amount < 10.000 ATAU Poketo gagal/belum ada QRIS:
-        // Gunakan payment gateway ArexansPay dan XMPayment
-        if (!qrString) {
-          // Coba ArexansPay
+        // 2. GATEWAY: XMPAYMENT (Payment 2: QRIS Otomatis & Cek Saldo Realtime)
+        if ((chosenGateway === 'xmpayment' || (!qrString && chosenGateway !== 'arexanspay')) && !qrString) {
+          try {
+            const xmpResp = await fetch('https://xmpayment.my.id/api/v1/create', {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${xmpKey}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                order_id: orderId,
+                amount: amount,
+                customer_name: cleanCustName,
+                customer_email: 'buyer@arexans.my.id',
+                redirect_url: 'https://tools.arexans.my.id',
+              }),
+            });
+            const xmpData = await xmpResp.json().catch(() => null);
+            if (xmpData?.data?.qr_string) {
+              qrString = xmpData.data.qr_string;
+              totalAmount = xmpData.data.total_amount || amount;
+              qrisUrl = xmpData.data.checkout_url || xmpData.data.qr_code_url || `https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=${encodeURIComponent(qrString)}`;
+              gatewayUsed = 'xmpayment';
+            }
+          } catch (xmpErr) {
+            console.warn('XMPayment create error, fallback:', xmpErr);
+          }
+        }
+
+        // 3. GATEWAY: AREXANSPAY (Payment 1: QRIS Realtime via www.arexanspay.my.id)
+        if (!qrString && chosenGateway !== 'xmpayment') {
           try {
             const arexResp = await fetch(`https://www.arexanspay.my.id/api/qris/${encodeURIComponent(arexansQrisId)}`, {
               headers: { 'X-API-Key': arexansApiKey },
@@ -671,42 +727,13 @@ export async function handleFunctionsRequest(req: any, res: any): Promise<boolea
           } catch (aErr) {
             console.warn('ArexansPay merchant fetch error, fallback:', aErr);
           }
+        }
 
-          // Coba XMPayment jika ArexansPay gagal
-          if (!qrString) {
-            try {
-              const xmpResp = await fetch('https://xmpayment.my.id/api/v1/create', {
-                method: 'POST',
-                headers: {
-                  'Authorization': `Bearer ${xmpKey}`,
-                  'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                  order_id: orderId,
-                  amount: amount,
-                  customer_name: cleanCustName,
-                  customer_email: 'buyer@arexans.my.id',
-                  redirect_url: 'https://tools.arexans.my.id',
-                }),
-              });
-              const xmpData = await xmpResp.json().catch(() => null);
-              if (xmpData?.data?.qr_string) {
-                qrString = xmpData.data.qr_string;
-                totalAmount = xmpData.data.total_amount || amount;
-                qrisUrl = xmpData.data.checkout_url || xmpData.data.qr_code_url || `https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=${encodeURIComponent(qrString)}`;
-                gatewayUsed = 'xmpayment';
-              }
-            } catch (xmpErr) {
-              console.warn('XMPayment create error, fallback:', xmpErr);
-            }
-          }
-
-          // Fallback Dynamic EMVCo QRIS untuk ArexansPay
-          if (!qrString) {
-            qrString = generateDynamicQris(DEFAULT_AREXANS_QRIS, amount);
-            qrisUrl = `https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=${encodeURIComponent(qrString)}`;
-            gatewayUsed = 'arexanspay';
-          }
+        // 4. Fallback Dynamic EMVCo QRIS jika provider eksternal tidak merespon
+        if (!qrString) {
+          qrString = generateDynamicQris(DEFAULT_AREXANS_QRIS, amount);
+          qrisUrl = `https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=${encodeURIComponent(qrString)}`;
+          gatewayUsed = chosenGateway === 'xmpayment' ? 'xmpayment' : 'arexanspay';
         }
 
         // Insert into Cloud SQL transactions
@@ -758,45 +785,162 @@ export async function handleFunctionsRequest(req: any, res: any): Promise<boolea
         }));
       }
 
-      // Endpoint untuk generate Virtual Account Poketo realtime secara in-app
-      if (funcName === 'poketo-va') {
-        const { slug, bank } = body;
-        if (!slug || !bank) {
+      // Endpoint untuk generate Poketo payment (VA, Akulaku, Card, Status) realtime secara in-app
+      if (funcName === 'poketo-va' || funcName === 'poketo-pay' || funcName === 'poketo-status') {
+        const { slug, bank, channel = 'VA', payer } = body;
+        if (!slug) {
           res.statusCode = 400;
           res.setHeader('Content-Type', 'application/json');
-          return res.end(JSON.stringify({ error: 'Slug dan kode bank wajib diisi' }));
+          return res.end(JSON.stringify({ error: 'Slug invoice Poketo wajib diisi' }));
         }
 
-        try {
-          const vaRes = await fetch(`https://pay.poketo.id/api/public/invoices/${encodeURIComponent(slug)}/pay`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ channel: 'VA', bank: bank.toUpperCase() }),
-          });
-          const vaData = await vaRes.json();
-          if (vaData?.success && vaData.payment) {
+        const cleanSlug = encodeURIComponent(String(slug).trim());
+
+        // Check realtime status
+        if (channel === 'STATUS' || funcName === 'poketo-status') {
+          try {
+            const stRes = await fetch(`https://pay.poketo.id/api/public/invoices/${cleanSlug}/status`);
+            const stData = await stRes.json().catch(() => null);
+            if (stData?.status === 'PAID') {
+              try {
+                const txRes = await pool.query('SELECT * FROM transactions WHERE transaction_id = $1 OR id = $1 LIMIT 1', [body.transactionId || slug]);
+                if (txRes.rows[0] && txRes.rows[0].status === 'pending') {
+                  await fulfillTransaction(txRes.rows[0]);
+                }
+              } catch (fErr) {
+                console.warn('Auto fulfill on poketo-status error:', fErr);
+              }
+            }
             res.setHeader('Content-Type', 'application/json');
             return res.end(JSON.stringify({
               success: true,
-              payment: vaData.payment,
+              status: stData?.status || 'PENDING',
+              paid: stData?.status === 'PAID',
+              paymentChannel: stData?.paymentChannel,
+              paidAt: stData?.paidAt,
             }));
-          } else {
+          } catch (stErr: any) {
+            res.statusCode = 500;
+            res.setHeader('Content-Type', 'application/json');
+            return res.end(JSON.stringify({ success: false, error: stErr.message }));
+          }
+        }
+
+        // Channel: Virtual Account
+        if (channel === 'VA' || (!channel && bank)) {
+          if (!bank) {
             res.statusCode = 400;
             res.setHeader('Content-Type', 'application/json');
-            return res.end(JSON.stringify({
-              success: false,
-              error: vaData?.error || 'Gagal memproses nomor Virtual Account untuk bank ini.',
-            }));
+            return res.end(JSON.stringify({ error: 'Kode bank wajib diisi' }));
           }
-        } catch (e: any) {
-          res.statusCode = 500;
-          res.setHeader('Content-Type', 'application/json');
-          return res.end(JSON.stringify({ success: false, error: e.message || 'Server error' }));
+
+          try {
+            const vaRes = await fetch(`https://pay.poketo.id/api/public/invoices/${cleanSlug}/pay`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ channel: 'VA', bank: String(bank).toUpperCase() }),
+            });
+            const vaData = await vaRes.json();
+            if (vaData?.success && vaData.payment) {
+              res.setHeader('Content-Type', 'application/json');
+              return res.end(JSON.stringify({
+                success: true,
+                payment: vaData.payment,
+              }));
+            } else {
+              res.statusCode = 400;
+              res.setHeader('Content-Type', 'application/json');
+              return res.end(JSON.stringify({
+                success: false,
+                error: vaData?.error || 'Gagal memproses nomor Virtual Account untuk bank ini.',
+              }));
+            }
+          } catch (e: any) {
+            res.statusCode = 500;
+            res.setHeader('Content-Type', 'application/json');
+            return res.end(JSON.stringify({ success: false, error: e.message || 'Server error' }));
+          }
         }
+
+        // Channel: PayLater Akulaku
+        if (channel === 'AKULAKU') {
+          const rawPostcode = String(payer?.postcode || '12190').replace(/\D/g, '');
+          const cleanPostcode = rawPostcode.length === 5 ? rawPostcode : '12190';
+          const akulakuPayer = {
+            name: String(payer?.name || 'Pelanggan Arexans').trim(),
+            phone: String(payer?.phone || '08123456789').trim(),
+            address: String(payer?.address || 'Jl. Raya No. 1').trim(),
+            city: String(payer?.city || 'Jakarta Selatan').trim(),
+            state: String(payer?.state || 'DKI Jakarta').trim(),
+            postcode: cleanPostcode,
+          };
+
+          try {
+            const akuRes = await fetch(`https://pay.poketo.id/api/public/invoices/${cleanSlug}/pay`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ channel: 'AKULAKU', payer: akulakuPayer }),
+            });
+            const akuData = await akuRes.json();
+            if (akuData?.success && akuData.payment) {
+              res.setHeader('Content-Type', 'application/json');
+              return res.end(JSON.stringify({
+                success: true,
+                payment: akuData.payment,
+              }));
+            } else {
+              res.statusCode = 400;
+              res.setHeader('Content-Type', 'application/json');
+              return res.end(JSON.stringify({
+                success: false,
+                error: akuData?.error || 'Gagal membuat tagihan Akulaku PayLater. Pastikan data lengkap.',
+              }));
+            }
+          } catch (e: any) {
+            res.statusCode = 500;
+            res.setHeader('Content-Type', 'application/json');
+            return res.end(JSON.stringify({ success: false, error: e.message || 'Server error' }));
+          }
+        }
+
+        // Channel: Card (Debit & Kredit)
+        if (channel === 'CARD') {
+          try {
+            const cardRes = await fetch(`https://pay.poketo.id/api/public/invoices/${cleanSlug}/pay`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ channel: 'CARD' }),
+            });
+            const cardData = await cardRes.json();
+            if (cardData?.success && cardData.payment) {
+              res.setHeader('Content-Type', 'application/json');
+              return res.end(JSON.stringify({
+                success: true,
+                payment: cardData.payment,
+              }));
+            } else {
+              res.statusCode = 400;
+              res.setHeader('Content-Type', 'application/json');
+              return res.end(JSON.stringify({
+                success: false,
+                error: cardData?.error || 'Gagal menyiapkan pembayaran kartu.',
+              }));
+            }
+          } catch (e: any) {
+            res.statusCode = 500;
+            res.setHeader('Content-Type', 'application/json');
+            return res.end(JSON.stringify({ success: false, error: e.message || 'Server error' }));
+          }
+        }
+
+        // Unknown channel
+        res.statusCode = 400;
+        res.setHeader('Content-Type', 'application/json');
+        return res.end(JSON.stringify({ error: `Channel '${channel}' tidak didukung` }));
       }
 
       if (funcName === 'check-payment') {
-        const { transactionId } = body;
+        const { transactionId, slug } = body;
         if (!transactionId) {
           res.statusCode = 400;
           res.setHeader('Content-Type', 'application/json');
@@ -818,6 +962,23 @@ export async function handleFunctionsRequest(req: any, res: any): Promise<boolea
 
         let isPaid = false;
         let cancelled = false;
+
+        // 0. Check Poketo public status API if slug is provided
+        if (slug) {
+          try {
+            const pubRes = await fetch(`https://pay.poketo.id/api/public/invoices/${encodeURIComponent(String(slug).trim())}/status`);
+            if (pubRes.ok) {
+              const pubData = await pubRes.json().catch(() => null);
+              if (pubData?.status === 'PAID') {
+                isPaid = true;
+              } else if (pubData?.status === 'CANCELLED' || pubData?.status === 'EXPIRED') {
+                cancelled = true;
+              }
+            }
+          } catch (err) {
+            console.warn('Poketo public status check err:', err);
+          }
+        }
 
         // 1. Check Poketo
         try {

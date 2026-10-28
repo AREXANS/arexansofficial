@@ -3,7 +3,10 @@ import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Shuffle, Edit3, Tag, ChevronDown, Gift, Coins, CreditCard, Sparkles } from 'lucide-react';
+import { 
+  Shuffle, Edit3, Tag, ChevronDown, Gift, Coins, CreditCard, Sparkles,
+  Smartphone, Radio, CheckCircle2, AlertTriangle, ShieldCheck
+} from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from '@/hooks/use-toast';
 import { getMaintenanceState, isDeveloperTesting } from '@/lib/maintenanceStore';
@@ -29,7 +32,7 @@ interface OrderFormProps {
   selectedPkg: 'NORMAL' | 'VIP' | 'LIFETIME' | null;
   formData: { key: string; duration: string };
   setFormData: (data: { key: string; duration: string }) => void;
-  onSubmit: (e: React.FormEvent, promoCode?: string, discountedAmount?: number) => void;
+  onSubmit: (e: React.FormEvent, promoCode?: string, discountedAmount?: number, selectedGateway?: 'arexanspay' | 'xmpayment' | 'poketo') => void;
   onBack: () => void;
   onGenerate: () => void;
   loading: boolean;
@@ -38,6 +41,7 @@ interface OrderFormProps {
   parseDuration: (input: string) => { days: number; text: string } | null;
   prices: { NORMAL: number; VIP: number };
   resellerCode?: string | null;
+  developerOnline?: boolean;
 }
 
 const generateRandomKey = () => {
@@ -60,6 +64,7 @@ const OrderForm: FC<OrderFormProps> = ({
   parseDuration,
   prices,
   resellerCode,
+  developerOnline,
 }) => {
   const navigate = useNavigate();
   const [keyMode, setKeyMode] = useState<'random' | 'custom'>('random');
@@ -76,20 +81,56 @@ const OrderForm: FC<OrderFormProps> = ({
   const [xcoinsPayLoading, setXcoinsPayLoading] = useState(false);
   const [lifetimePrice, setLifetimePrice] = useState(700000);
 
+  // Multi-gateway selection states
+  const [enabledGateways, setEnabledGateways] = useState<string[]>(['arexanspay', 'xmpayment', 'poketo']);
+  const [selectedGateway, setSelectedGateway] = useState<'arexanspay' | 'xmpayment' | 'poketo'>('xmpayment');
+  const [phoneOnline, setPhoneOnline] = useState<boolean>(Boolean(developerOnline));
+
+  useEffect(() => {
+    if (developerOnline !== undefined) {
+      setPhoneOnline(developerOnline);
+    }
+  }, [developerOnline]);
+
   useEffect(() => {
     const loadDiscounts = async () => {
       const { data } = await supabase.from('package_discounts').select('*').eq('is_active', true);
       if (data) setDiscounts(data as Discount[]);
     };
 
-    const loadXcoinsSettings = async () => {
-      const { data } = await supabase.from('app_settings').select('key, value').in('key', ['xcoins_enabled', 'xcoins_only']);
+    const loadSettings = async () => {
+      const { data } = await supabase.from('app_settings').select('key, value').in('key', [
+        'xcoins_enabled', 'xcoins_only', 'enabled_gateways', 'payment_gateway', 'developer_last_seen'
+      ]);
       const map = Object.fromEntries((data || []).map((s: any) => [s.key, s.value]));
       const enabled = map.xcoins_enabled === 'on';
       const only = map.xcoins_only === 'on';
       setXcoinsEnabled(enabled);
       setXcoinsOnly(only);
       if (only) setPaymentMethod('xcoins');
+
+      // Enabled gateways
+      let list: string[] = ['arexanspay', 'xmpayment', 'poketo'];
+      if (map.enabled_gateways) {
+        try {
+          const parsed = JSON.parse(map.enabled_gateways);
+          if (Array.isArray(parsed) && parsed.length > 0) list = parsed;
+        } catch {}
+      } else if (map.payment_gateway) {
+        const pg = map.payment_gateway.toLowerCase();
+        if (pg === 'both') list = ['arexanspay', 'xmpayment'];
+        else if (pg === 'all') list = ['arexanspay', 'xmpayment', 'poketo'];
+        else if (pg.includes(',')) list = pg.split(',').map((s: string) => s.trim());
+        else list = [pg];
+      }
+      setEnabledGateways(list);
+
+      // Heartbeat check for phone (ArexansPay)
+      const last = parseInt(map.developer_last_seen || '0', 10);
+      const isOnline = !!last && (Date.now() - last < 3 * 60 * 1000);
+      if (developerOnline === undefined) {
+        setPhoneOnline(isOnline);
+      }
 
       // Check XCoins session
       if (enabled) {
@@ -106,9 +147,12 @@ const OrderForm: FC<OrderFormProps> = ({
     };
 
     loadDiscounts();
-    loadXcoinsSettings();
+    loadSettings();
     loadLifetimePrice();
-  }, []);
+
+    const interval = setInterval(loadSettings, 12000);
+    return () => clearInterval(interval);
+  }, [developerOnline]);
 
   useEffect(() => {
     if (keyMode === 'random' && (!formData.key || !formData.key.startsWith('AXS-'))) {
@@ -234,6 +278,28 @@ const OrderForm: FC<OrderFormProps> = ({
     : Math.floor(estimatedTotal * (standardDiscountPercent / 100));
   const finalTotal = Math.max(0, estimatedTotal - discountAmount);
 
+  // Gateway availability rules
+  // Payment 1: ArexansPay (hanya online ketika HP admin online aktif data)
+  const isArexansPayOnline = Boolean(phoneOnline) && enabledGateways.includes('arexanspay');
+  // Payment 2: XMPayment (selalu online)
+  const isXmpOnline = enabledGateways.includes('xmpayment');
+  // Payment 3: Poketo (hanya online ketika orderan minimal 10.000)
+  const isPoketoOnline = enabledGateways.includes('poketo') && finalTotal >= 10000;
+
+  // Auto-switch to an available online gateway
+  useEffect(() => {
+    if (selectedGateway === 'poketo' && !isPoketoOnline) {
+      if (isXmpOnline) setSelectedGateway('xmpayment');
+      else if (isArexansPayOnline) setSelectedGateway('arexanspay');
+    } else if (selectedGateway === 'arexanspay' && !isArexansPayOnline) {
+      if (isXmpOnline) setSelectedGateway('xmpayment');
+      else if (isPoketoOnline) setSelectedGateway('poketo');
+    } else if (selectedGateway === 'xmpayment' && !isXmpOnline) {
+      if (isPoketoOnline) setSelectedGateway('poketo');
+      else if (isArexansPayOnline) setSelectedGateway('arexanspay');
+    }
+  }, [finalTotal, isArexansPayOnline, isXmpOnline, isPoketoOnline, selectedGateway]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const mState = await getMaintenanceState();
@@ -250,8 +316,24 @@ const OrderForm: FC<OrderFormProps> = ({
     if (paymentMethod === 'xcoins') {
       handleXcoinsPay(e);
     } else {
+      if (selectedGateway === 'arexanspay' && !isArexansPayOnline) {
+        toast({
+          title: 'Payment 1 Offline',
+          description: 'HP Admin sedang mati atau tidak aktif data. Silakan pilih Payment 2 (XMPayment) atau Payment 3 (Poketo).',
+          variant: 'destructive',
+        });
+        return;
+      }
+      if (selectedGateway === 'poketo' && finalTotal < 10000) {
+        toast({
+          title: 'Minimal Order Rp 10.000',
+          description: `Payment 3 (Poketo) hanya online untuk order minimal Rp 10.000 (total saat ini: ${formatRupiah(finalTotal)}). Silakan pilih Payment 1 atau 2.`,
+          variant: 'destructive',
+        });
+        return;
+      }
       const codeToPass = appliedPromo?.promo_code || undefined;
-      onSubmit(e, codeToPass, finalTotal > 0 ? finalTotal : undefined);
+      onSubmit(e, codeToPass, finalTotal > 0 ? finalTotal : undefined, selectedGateway);
     }
   };
 
@@ -397,11 +479,15 @@ const OrderForm: FC<OrderFormProps> = ({
             <div className="mt-2 text-[11px] space-y-1 bg-muted/40 p-2.5 rounded-lg border border-border/60">
               <p className="text-muted-foreground flex items-center gap-1.5">
                 <span className="w-1.5 h-1.5 rounded-full bg-cyan-400"></span>
-                <span>Tagihan &lt; Rp 10.000: Gateway <strong>ArexansPay &amp; XMPayment</strong> (QRIS Instan)</span>
+                <span>Payment 1 <strong>ArexansPay</strong>: Online bila HP admin aktif data internet.</span>
+              </p>
+              <p className="text-muted-foreground flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-indigo-400"></span>
+                <span>Payment 2 <strong>XMPayment</strong>: Selalu online untuk semua nominal.</span>
               </p>
               <p className="text-muted-foreground flex items-center gap-1.5">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
-                <span>Tagihan &ge; Rp 10.000: Gateway <strong>Poketo.id</strong> (QRIS, VA Bank, PayLater, Kartu Debit)</span>
+                <span>Payment 3 <strong>Poketo.id</strong>: Hanya online untuk order minimal Rp 10.000.</span>
               </p>
             </div>
           </div>
@@ -485,11 +571,10 @@ const OrderForm: FC<OrderFormProps> = ({
                   </span>
                   <span className="font-medium">
                     -{formatRupiah(discountAmount)}
-                    {fixedAmount === 0 && discountPercent > 0 ? ` (${discountPercent}%)` : ''}
+                    {fixedAmount === 0 && standardDiscountPercent > 0 ? ` (${standardDiscountPercent}%)` : ''}
                   </span>
                 </div>
               )}
-
 
               {!appliedPromo && durationData && !durationDiscount && (
                 (() => {
@@ -516,7 +601,176 @@ const OrderForm: FC<OrderFormProps> = ({
             </div>
           )}
 
-          {/* Payment Method Selection */}
+          {/* Pilihan Payment Gateway 1, 2, 3 */}
+          {paymentMethod === 'qris' && (
+            <div className="space-y-3 pt-1 animate-slide-in">
+              <div className="flex items-center justify-between">
+                <label className="block text-sm font-semibold text-foreground flex items-center gap-2">
+                  <CreditCard className="w-4 h-4 text-primary" />
+                  Pilih Payment Gateway
+                </label>
+                <span className="text-[11px] font-mono text-muted-foreground">
+                  {selectedGateway === 'arexanspay' ? 'Payment 1 Aktif' : selectedGateway === 'xmpayment' ? 'Payment 2 Aktif' : 'Payment 3 Aktif'}
+                </span>
+              </div>
+
+              <div className="space-y-2.5">
+                {/* Payment 1: ArexansPay (Hanya online ketika HP admin online aktif data) */}
+                {enabledGateways.includes('arexanspay') && (
+                  <button
+                    type="button"
+                    disabled={!isArexansPayOnline}
+                    onClick={() => {
+                      if (isArexansPayOnline) {
+                        setSelectedGateway('arexanspay');
+                      } else {
+                        toast({
+                          title: 'Payment 1 Offline',
+                          description: 'HP Admin sedang offline / tidak terhubung data internet. Silakan pilih Payment 2 (XMPayment) atau Payment 3 (Poketo).',
+                          variant: 'destructive',
+                        });
+                      }
+                    }}
+                    className={`w-full p-3 rounded-xl border text-left transition-all duration-200 relative ${
+                      selectedGateway === 'arexanspay' && isArexansPayOnline
+                        ? 'border-cyan-500 bg-cyan-500/15 text-foreground ring-1 ring-cyan-500 shadow-md shadow-cyan-500/10'
+                        : !isArexansPayOnline
+                        ? 'border-border/50 bg-muted/20 opacity-60 cursor-not-allowed'
+                        : 'border-border/70 bg-muted/30 hover:border-cyan-500/40 text-muted-foreground'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="font-bold text-sm text-foreground">
+                            Payment 1: ArexansPay
+                          </span>
+                          <span
+                            className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${
+                              isArexansPayOnline
+                                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                                : 'bg-red-500/20 text-red-400 border border-red-500/30'
+                            }`}
+                          >
+                            {isArexansPayOnline ? 'Online (HP Admin Aktif)' : 'Offline (HP Mati/Tanpa Data)'}
+                          </span>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          QRIS Instan Realtime. Tanpa biaya admin tambahan.
+                        </p>
+                      </div>
+                      <div className={`mt-0.5 w-4 h-4 rounded-full border flex items-center justify-center shrink-0 ${
+                        selectedGateway === 'arexanspay' && isArexansPayOnline
+                          ? 'border-cyan-400 bg-cyan-400'
+                          : 'border-muted-foreground/40'
+                      }`}>
+                        {selectedGateway === 'arexanspay' && isArexansPayOnline && (
+                          <div className="w-1.5 h-1.5 rounded-full bg-black" />
+                        )}
+                      </div>
+                    </div>
+                  </button>
+                )}
+
+                {/* Payment 2: XMPayment (Selalu online) */}
+                {enabledGateways.includes('xmpayment') && (
+                  <button
+                    type="button"
+                    onClick={() => setSelectedGateway('xmpayment')}
+                    className={`w-full p-3 rounded-xl border text-left transition-all duration-200 relative ${
+                      selectedGateway === 'xmpayment'
+                        ? 'border-indigo-500 bg-indigo-500/15 text-foreground ring-1 ring-indigo-500 shadow-md shadow-indigo-500/10'
+                        : 'border-border/70 bg-muted/30 hover:border-indigo-500/40 text-muted-foreground'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="font-bold text-sm text-foreground">
+                            Payment 2: XMPayment
+                          </span>
+                          <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                            Online (24/7)
+                          </span>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          QRIS Otomatis dengan kode unik &amp; verifikasi mutasi realtime.
+                        </p>
+                      </div>
+                      <div className={`mt-0.5 w-4 h-4 rounded-full border flex items-center justify-center shrink-0 ${
+                        selectedGateway === 'xmpayment'
+                          ? 'border-indigo-400 bg-indigo-400'
+                          : 'border-muted-foreground/40'
+                      }`}>
+                        {selectedGateway === 'xmpayment' && (
+                          <div className="w-1.5 h-1.5 rounded-full bg-black" />
+                        )}
+                      </div>
+                    </div>
+                  </button>
+                )}
+
+                {/* Payment 3: Poketo (Hanya online ketika orderan minimal 10.000) */}
+                {enabledGateways.includes('poketo') && (
+                  <button
+                    type="button"
+                    disabled={!isPoketoOnline}
+                    onClick={() => {
+                      if (isPoketoOnline) {
+                        setSelectedGateway('poketo');
+                      } else {
+                        toast({
+                          title: 'Minimal Order Rp 10.000',
+                          description: `Payment 3 (Poketo) hanya online untuk pembelian minimal Rp 10.000. Total order Anda saat ini: ${formatRupiah(finalTotal)}.`,
+                          variant: 'destructive',
+                        });
+                      }
+                    }}
+                    className={`w-full p-3 rounded-xl border text-left transition-all duration-200 relative ${
+                      selectedGateway === 'poketo' && isPoketoOnline
+                        ? 'border-emerald-500 bg-emerald-500/15 text-foreground ring-1 ring-emerald-500 shadow-md shadow-emerald-500/10'
+                        : !isPoketoOnline
+                        ? 'border-border/50 bg-muted/20 opacity-60 cursor-not-allowed'
+                        : 'border-border/70 bg-muted/30 hover:border-emerald-500/40 text-muted-foreground'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="font-bold text-sm text-foreground">
+                            Payment 3: Poketo.id
+                          </span>
+                          <span
+                            className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${
+                              isPoketoOnline
+                                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                                : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                            }`}
+                          >
+                            {isPoketoOnline ? 'Online (Multi-Metode)' : 'Offline (Min. Rp 10.000)'}
+                          </span>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          QRIS Instan, Virtual Account 10 Bank, PayLater &amp; Kartu Debit.
+                        </p>
+                      </div>
+                      <div className={`mt-0.5 w-4 h-4 rounded-full border flex items-center justify-center shrink-0 ${
+                        selectedGateway === 'poketo' && isPoketoOnline
+                          ? 'border-emerald-400 bg-emerald-400'
+                          : 'border-muted-foreground/40'
+                      }`}>
+                        {selectedGateway === 'poketo' && isPoketoOnline && (
+                          <div className="w-1.5 h-1.5 rounded-full bg-black" />
+                        )}
+                      </div>
+                    </div>
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Payment Method Selection (XCoins vs QRIS) */}
           {xcoinsEnabled && !xcoinsOnly && (
             <div className="animate-slide-in">
               <label className="block text-sm font-medium mb-2 text-foreground">Metode Pembayaran</label>
@@ -524,7 +778,7 @@ const OrderForm: FC<OrderFormProps> = ({
                 <button type="button" onClick={() => setPaymentMethod('qris')}
                   className={`p-3 rounded-xl border flex flex-col items-center gap-1.5 transition-all ${paymentMethod === 'qris' ? 'border-primary bg-primary/10' : 'border-border bg-muted/50 hover:border-primary/50'}`}>
                   <CreditCard className={`w-5 h-5 ${paymentMethod === 'qris' ? 'text-primary' : 'text-muted-foreground'}`} />
-                  <span className="text-xs font-medium">QRIS</span>
+                  <span className="text-xs font-medium">QRIS / Invoice</span>
                 </button>
                 <button type="button" onClick={() => { setPaymentMethod('xcoins'); if (!xcoinsUser) navigate('/xcoins'); }}
                   className={`p-3 rounded-xl border flex flex-col items-center gap-1.5 transition-all ${paymentMethod === 'xcoins' ? 'border-primary bg-primary/10' : 'border-border bg-muted/50 hover:border-primary/50'}`}>

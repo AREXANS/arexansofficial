@@ -144,6 +144,11 @@ const Index = () => {
     packageName: string;
     days: number;
     productId?: string;
+    gateway?: string;
+    isPoketo?: boolean;
+    slug?: string;
+    vaBanks?: Array<{ code: string; name: string }>;
+    quotes?: any;
   }) => {
     setFormData({ key: order.licenseKey, duration: `${order.days} hari` });
     setSelectedPkg(order.packageName as any);
@@ -156,6 +161,11 @@ const Index = () => {
       totalAmount: order.totalAmount,
       expiresAt: order.expiresAt,
       productId: order.productId,
+      gateway: order.gateway,
+      isPoketo: order.isPoketo,
+      slug: order.slug,
+      vaBanks: order.vaBanks,
+      quotes: order.quotes,
     };
     setPaymentData(newPaymentData);
     setStep(3);
@@ -258,12 +268,12 @@ const Index = () => {
         .select('key,value')
         .in('key', ['payment_gateway', 'developer_last_seen']);
       const map = Object.fromEntries((data || []).map((r: any) => [r.key, r.value]));
-      setGatewaySetting(map.payment_gateway || 'pakasir');
+      setGatewaySetting(map.payment_gateway || 'all');
       const last = parseInt(map.developer_last_seen || '0', 10);
-      // ArexansPay dianggap online secara default. Hanya OFFLINE bila heartbeat pernah tercatat
-      // lalu berhenti > 3 menit — artinya perangkat admin mati baterai / tanpa internet/wifi.
+      // ArexansPay (Payment 1) HANYA online ketika HP admin online aktif data.
+      // Jika HP mati / data tidak aktif (> 3 menit tanpa heartbeat), status offline.
       const STALE_MS = 3 * 60 * 1000;
-      setDeveloperOnline(!last || (Date.now() - last < STALE_MS));
+      setDeveloperOnline(Boolean(last) && (Date.now() - last < STALE_MS));
     };
 
     loadAds();
@@ -294,10 +304,10 @@ const Index = () => {
   };
 
   // Check payment status
-  const checkPaymentStatus = useCallback(async (transactionId: string, days: number) => {
+  const checkPaymentStatus = useCallback(async (transactionId: string, days: number, slugOverride?: string) => {
     try {
       const response = await supabase.functions.invoke('check-payment', {
-        body: { transactionId }
+        body: { transactionId, slug: slugOverride || paymentData?.slug }
       });
 
       if (response.error) {
@@ -410,7 +420,12 @@ const Index = () => {
 
 
 
-  const handleFormSubmit = async (e: React.FormEvent, submittedPromoCode?: string, discountedAmount?: number) => {
+  const handleFormSubmit = async (
+    e: React.FormEvent,
+    submittedPromoCode?: string,
+    discountedAmount?: number,
+    chosenGateway?: 'arexanspay' | 'xmpayment' | 'poketo'
+  ) => {
     e.preventDefault();
     setErrorMsg('');
     const isLifetime = selectedPkg === 'LIFETIME';
@@ -442,33 +457,21 @@ const Index = () => {
       return;
     }
 
-    // If admin enabled both gateways, ask user which one to use.
-    // But if developer device is offline, ArexansPay won't work realtime → auto-fallback to XMPayment.
-    if (gatewaySetting === 'both') {
-      if (!developerOnline) {
-        await createPayment(calculatedAmount, durationData!.days, submittedPromoCode, 'xmpayment');
-        return;
-      }
-      setPendingPayment({
-        amount: calculatedAmount,
-        days: durationData!.days,
-        promoCode: submittedPromoCode,
-        packageName: selectedPkg || 'NORMAL',
-      });
-      setLoading(false);
-      return;
-    }
-
-    // Single-gateway ArexansPay but developer offline → fallback to XMPayment
-    if ((gatewaySetting === 'arexanspay' || gatewaySetting === 'cashify' || gatewaySetting === 'casaku') && !developerOnline) {
-      await createPayment(calculatedAmount, durationData!.days, submittedPromoCode, 'xmpayment');
+    // If buyer directly picked a gateway in the form, use it!
+    if (chosenGateway) {
+      await createPayment(calculatedAmount, durationData!.days, submittedPromoCode, chosenGateway);
       return;
     }
 
     await createPayment(calculatedAmount, durationData!.days, submittedPromoCode);
   };
 
-  const createPayment = async (amount: number, days: number, promoCode?: string, gatewayOverride?: 'arexanspay' | 'xmpayment' | 'pakasir') => {
+  const createPayment = async (
+    amount: number,
+    days: number,
+    promoCode?: string,
+    gatewayOverride?: 'arexanspay' | 'xmpayment' | 'pakasir' | 'poketo'
+  ) => {
     setLoading(true);
     try {
       const response = await supabase.functions.invoke('create-payment', {
@@ -597,6 +600,7 @@ const Index = () => {
         formatRupiah={formatRupiah}
         parseDuration={parseDuration}
         prices={PRICES}
+        developerOnline={developerOnline}
       />
       {pendingPayment && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
