@@ -13,7 +13,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { 
   Settings, Package, Image, List, CreditCard, LogOut, Save, 
   Plus, Trash2, Edit2, Eye, EyeOff, RefreshCw, MessageSquare, Shield, ShieldX, ShieldOff, Key, FileText, FileCode, Upload, Tag, CheckCircle, Copy, Database, MapPin, Coins, Users, Film, Search, ReceiptText, Clock3, CircleDollarSign, X, ShoppingBag,
-  Wrench, Pause, Play, Lock, AlertTriangle
+  Wrench, Pause, Play, Lock, AlertTriangle, Smartphone, Laptop
 } from 'lucide-react';
 import GlobalBackground from '@/components/GlobalBackground';
 import DeviceApprovalScreen from '@/components/DeviceApprovalScreen';
@@ -858,27 +858,62 @@ const Admin = () => {
     return (
       <div className="min-h-screen flex items-center justify-center p-4 bg-background relative overflow-hidden">
         <GlobalBackground />
-        <Card className="w-full max-w-md z-10 glass-card">
-          <CardHeader className="text-center">
-            <CardTitle className="font-display text-2xl text-primary">Developer Login</CardTitle>
-            <CardDescription>Masukkan password admin untuk melanjutkan</CardDescription>
+        <Card className="w-full max-w-md z-10 glass-card border border-primary/20 shadow-2xl">
+          <CardHeader className="text-center pb-2">
+            <div className="w-12 h-12 rounded-2xl bg-primary/10 border border-primary/30 flex items-center justify-center mx-auto mb-2 text-primary">
+              <Shield className="w-6 h-6" />
+            </div>
+            <CardTitle className="font-display text-2xl text-foreground font-bold">Developer Portal</CardTitle>
+            <CardDescription className="text-xs">Deteksi perangkat pengembang & autentikasi sistem</CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-4 pt-2">
+            {/* Device Detection Box */}
+            <div className="p-3.5 rounded-xl bg-card/60 border border-border/80 space-y-2 text-xs">
+              <div className="flex items-center justify-between pb-1.5 border-b border-border/50">
+                <span className="font-semibold text-foreground flex items-center gap-1.5">
+                  <Smartphone className="w-3.5 h-3.5 text-primary" />
+                  Perangkat Terdeteksi
+                </span>
+                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                  deviceStatus === 'approved' 
+                    ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30' 
+                    : 'bg-amber-500/15 text-amber-400 border border-amber-500/30'
+                }`}>
+                  {deviceStatus === 'approved' ? 'Perangkat Disetujui' : 'Persetujuan Awal'}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 text-[11px]">
+                <div>
+                  <span className="text-muted-foreground block text-[10px]">Tipe & Model:</span>
+                  <span className="font-medium text-foreground truncate block">{deviceName}</span>
+                </div>
+                <div>
+                  <span className="text-muted-foreground block text-[10px]">Alamat IP:</span>
+                  <span className="font-mono text-foreground">{ipAddress}</span>
+                </div>
+                <div className="col-span-2">
+                  <span className="text-muted-foreground block text-[10px]">Device Fingerprint ID:</span>
+                  <span className="font-mono text-[10px] text-primary break-all">{deviceId}</span>
+                </div>
+              </div>
+            </div>
+
             <form onSubmit={handleLogin} className="space-y-4">
-              <div>
-                <Label htmlFor="password">Password</Label>
+              <div className="space-y-1.5">
+                <Label htmlFor="password" className="text-xs font-semibold text-foreground">Password Developer</Label>
                 <Input
                   id="password"
                   type="password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="Masukkan password admin"
-                  className="bg-background/50"
+                  className="bg-background/50 font-mono text-sm"
                   autoFocus
                 />
               </div>
-              <Button type="submit" className="w-full" disabled={loading}>
-                {loading ? 'Memverifikasi...' : 'Login'}
+              <Button type="submit" className="w-full bg-primary text-primary-foreground font-semibold" disabled={loading}>
+                {loading ? 'Memverifikasi Perangkat & Login...' : 'Setujui Perangkat & Masuk'}
               </Button>
             </form>
           </CardContent>

@@ -71,7 +71,7 @@ export const PaymentGatewaySettings: FC<PaymentGatewaySettingsProps> = ({ onSett
   // Discord Test Status
   const [discordTesting, setDiscordTesting] = useState(false);
 
-  // Fetch all payment settings in realtime
+  // Fetch all payment settings in realtime from PostgreSQL DB
   const loadSettings = useCallback(async () => {
     try {
       const { data, error } = await supabase.from('app_settings').select('key, value');
@@ -81,17 +81,8 @@ export const PaymentGatewaySettings: FC<PaymentGatewaySettingsProps> = ({ onSett
         map[row.key] = row.value ?? '';
       });
       setSettingsMap(map);
-      try {
-        localStorage.setItem('arexans_cached_app_settings', JSON.stringify(map));
-      } catch {}
     } catch (err: any) {
-      console.warn('Could not load payment settings from server, checking local cache:', err?.message || err);
-      try {
-        const cached = localStorage.getItem('arexans_cached_app_settings');
-        if (cached) {
-          setSettingsMap(JSON.parse(cached));
-        }
-      } catch {}
+      console.warn('Could not load payment settings from server:', err?.message || err);
     } finally {
       setLoading(false);
     }
@@ -99,6 +90,9 @@ export const PaymentGatewaySettings: FC<PaymentGatewaySettingsProps> = ({ onSett
 
   useEffect(() => {
     loadSettings();
+    // Realtime polling from DB every 10 seconds
+    const interval = setInterval(loadSettings, 10000);
+    return () => clearInterval(interval);
   }, [loadSettings]);
 
   const getValue = (key: string, fallback: string = '') => {
@@ -109,7 +103,7 @@ export const PaymentGatewaySettings: FC<PaymentGatewaySettingsProps> = ({ onSett
     setSettingsMap(prev => ({ ...prev, [key]: value }));
   };
 
-  // Upsert a setting in realtime to Supabase
+  // Upsert a setting in realtime to Supabase DB
   const saveSetting = async (key: string, val?: string) => {
     const valueToSave = val !== undefined ? val : (settingsMap[key] || '');
     setSavingKey(key);
@@ -121,9 +115,6 @@ export const PaymentGatewaySettings: FC<PaymentGatewaySettingsProps> = ({ onSett
       setSettingsMap(prev => {
         const next = { ...prev };
         upserts.forEach(u => { next[u.key] = u.value; });
-        try {
-          localStorage.setItem('arexans_cached_app_settings', JSON.stringify(next));
-        } catch {}
         return next;
       });
 
@@ -135,7 +126,7 @@ export const PaymentGatewaySettings: FC<PaymentGatewaySettingsProps> = ({ onSett
 
       toast({
         title: 'Pengaturan Disimpan',
-        description: `${key.replace(/_/g, ' ')} berhasil diperbarui secara realtime.`,
+        description: `${key.replace(/_/g, ' ')} berhasil diperbarui secara realtime di database.`,
       });
 
       onSettingsUpdated?.();

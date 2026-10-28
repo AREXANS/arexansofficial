@@ -177,14 +177,13 @@ export const useDeviceDetection = () => {
   const [isChecking, setIsChecking] = useState(true);
   
   const persistLogin = () => {
-    localStorage.setItem('admin_logged_in', 'true');
-    localStorage.setItem(`admin_device_approved_${deviceId}`, 'true');
     setIsLoggedIn(true);
+    setDeviceStatus('approved');
   };
   
   const clearLogin = () => {
-    localStorage.removeItem('admin_logged_in');
     setIsLoggedIn(false);
+    setDeviceStatus('new');
   };
 
   const deviceInfo = getDeviceInfo();
@@ -192,17 +191,10 @@ export const useDeviceDetection = () => {
 
   const checkDeviceStatus = useCallback(async () => {
     setIsChecking(true);
-    
-    // Fast check: if already approved locally
-    if (localStorage.getItem(`admin_device_approved_${deviceId}`) === 'true' || localStorage.getItem('admin_logged_in') === 'true') {
-      setDeviceStatus('approved');
-      setIsChecking(false);
-      return;
-    }
 
     try {
       const timeoutPromise = new Promise<{ data: null; error: Error }>((_, reject) =>
-        setTimeout(() => reject(new Error('timeout')), 1500)
+        setTimeout(() => reject(new Error('timeout')), 1000)
       );
 
       const queryPromise = supabase
@@ -214,7 +206,6 @@ export const useDeviceDetection = () => {
       const { data: sessions, error } = result || {};
 
       if (error) {
-        console.warn('Device status query error/timeout:', error);
         setDeviceStatus('new');
         setIsChecking(false);
         return;
@@ -225,7 +216,6 @@ export const useDeviceDetection = () => {
         setCurrentSession(session);
         
         if (session.is_approved) {
-          localStorage.setItem(`admin_device_approved_${deviceId}`, 'true');
           setDeviceStatus('approved');
         } else {
           setDeviceStatus('pending');
@@ -316,18 +306,46 @@ export const useDeviceDetection = () => {
     setAllSessions((data || []) as unknown as DeviceSession[]);
   };
 
-  const approveDevice = async (sessionId: string) => {
-    localStorage.setItem(`admin_device_approved_${deviceId}`, 'true');
-    const { error } = await supabase
-      .from('admin_sessions')
-      .update({ is_approved: true })
-      .eq('id', sessionId);
-    
-    if (error) {
-      console.error('Error approving device:', error);
-      return false;
+  const approveDevice = async (sessionIdOrDeviceId?: string) => {
+    const target = sessionIdOrDeviceId || deviceId;
+    const currentIp = (ipAddress && ipAddress !== 'Mendeteksi IP...') ? ipAddress : '127.0.0.1';
+    const deviceInfoJson: Json = {
+      browser: deviceInfo.browser,
+      os: deviceInfo.os,
+      platform: deviceInfo.platform,
+      userAgent: deviceInfo.userAgent,
+      screenResolution: deviceInfo.screenResolution,
+      language: deviceInfo.language,
+      timezone: deviceInfo.timezone,
+      ip: currentIp,
+      deviceType: deviceInfo.deviceType,
+      deviceModel: deviceInfo.deviceModel
+    };
+
+    try {
+      const { data: updated } = await supabase
+        .from('admin_sessions')
+        .update({ is_approved: true, is_current: true })
+        .or(`id.eq.${target},device_id.eq.${target}`)
+        .select();
+
+      if (!updated || updated.length === 0) {
+        await supabase
+          .from('admin_sessions')
+          .insert([{
+            id: target.startsWith('DEV-') ? `session-${target}` : target,
+            device_id: deviceId,
+            device_name: deviceName,
+            device_info: deviceInfoJson,
+            is_approved: true,
+            is_current: true
+          }]);
+      }
+    } catch (e) {
+      console.warn('DB approve device error:', e);
     }
-    
+
+    setDeviceStatus('approved');
     await loadAllSessions();
     return true;
   };

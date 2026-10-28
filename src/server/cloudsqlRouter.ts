@@ -521,16 +521,15 @@ export async function handleFunctionsRequest(req: any, res: any): Promise<boolea
       }
 
       if (funcName === 'create-payment') {
-        const {
-          amount,
-          customerName,
-          packageName,
-          packageDuration,
-          licenseKey: customerLicenseKey,
-          customerWhatsapp,
-          deviceId,
-          gateway,
-        } = body;
+        const rawAmount = Number(body.amount || body.total_amount || 0);
+        const amount = Math.max(1000, isNaN(rawAmount) ? 1000 : Math.round(rawAmount));
+        const packageName = body.packageName || body.package_name || 'NORMAL';
+        const packageDuration = Number(body.packageDuration || body.package_duration || body.days || 1);
+        const customerLicenseKey = (body.licenseKey || body.key || body.license_key || '').trim();
+        const customerName = body.customerName || body.customer_name || customerLicenseKey || 'Pelanggan Arexans';
+        const customerWhatsapp = body.customerWhatsapp || body.customer_whatsapp || body.phone || null;
+        const deviceId = body.deviceId || body.device_id || null;
+        const gateway = body.gateway || body.payment_gateway || '';
 
         const orderId = `TRX-${Date.now()}-${Math.random().toString(36).substr(2, 9).toUpperCase()}`;
         let expiresAt = new Date(Date.now() + 15 * 60 * 1000);
@@ -541,17 +540,20 @@ export async function handleFunctionsRequest(req: any, res: any): Promise<boolea
 
         // Query settings for gateway preference and keys
         const settingsRes = await pool.query(
-          "SELECT key, value FROM app_settings WHERE key IN ('payment_gateway', 'poketo_api_key', 'poketo_webhook_key')"
+          "SELECT key, value FROM app_settings WHERE key IN ('payment_gateway', 'poketo_api_key', 'poketo_webhook_key', 'arexanspay_api_key', 'arexanspay_qris_id', 'xmpayment_api_key')"
         );
         const settingsMap: Record<string, string> = {};
         (settingsRes.rows || []).forEach((r: any) => { settingsMap[r.key] = r.value; });
 
-        const activeGateway = gateway || settingsMap.payment_gateway || 'poketo';
+        const activeGateway = (gateway || settingsMap.payment_gateway || 'poketo').toLowerCase();
         const poketoKey = settingsMap.poketo_api_key || 'sk_live_iZEBli3dV1buw_sFB4DhUfIDVKGp-itZ';
-        const cleanCustName = customerName || customerLicenseKey || 'Pelanggan Arexans';
+        const arexansApiKey = settingsMap.arexanspay_api_key || 'arexanspay_f63fa727bda01551084e5c87bde526aeb68e1c471ff89fa36d2748b8c25156a3';
+        const arexansQrisId = settingsMap.arexanspay_qris_id || 'axspay-duqwono-h3sq-au0s-5h26-v7m2d1oy3c32';
+        const xmpKey = settingsMap.xmpayment_api_key || 'xmp_live_d2b8ea709d5d7a57ff974cd771435e0f58d4da888593350b';
+        const cleanCustName = customerName || 'Pelanggan Arexans';
 
-        // 1. Try Poketo
-        if (activeGateway === 'poketo' || activeGateway === 'both') {
+        // 1. Try Poketo Gateway (Default & Recommended)
+        if (activeGateway === 'poketo' || activeGateway === 'both' || !activeGateway) {
           try {
             const poketoResp = await fetch('https://poketo.id/api/v1/invoices', {
               method: 'POST',
@@ -562,7 +564,7 @@ export async function handleFunctionsRequest(req: any, res: any): Promise<boolea
               },
               body: JSON.stringify({
                 amount: Math.round(Number(amount)),
-                title: `Arexans - ${packageName || 'Tools'} (${packageDuration || 1} Hari)`,
+                title: `Arexans - ${packageName || 'Tools'} (${packageDuration} Hari)`,
                 referenceId: orderId,
                 customer: {
                   name: cleanCustName,
@@ -572,7 +574,7 @@ export async function handleFunctionsRequest(req: any, res: any): Promise<boolea
               }),
             });
 
-            const poketoData = await poketoResp.json();
+            const poketoData = await poketoResp.json().catch(() => null);
             if (poketoData?.data) {
               const inv = poketoData.data;
               paymentUrl = inv.paymentUrl || `https://pay.poketo.id/inv/${inv.id}`;
@@ -584,17 +586,53 @@ export async function handleFunctionsRequest(req: any, res: any): Promise<boolea
               }
             }
           } catch (pErr) {
-            console.warn('Poketo create invoice error, fallback:', pErr);
+            console.warn('Poketo create invoice exception, fallback:', pErr);
           }
         }
 
-        // 2. Fallback to XMPayment if no paymentUrl yet
-        if (!qrString && (activeGateway === 'xmpayment' || activeGateway === 'both' || !paymentUrl)) {
+        // 2. Try ArexansPay Gateway
+        if (!qrString && (activeGateway === 'arexanspay' || activeGateway === 'both')) {
+          try {
+            const arexResp = await fetch(`https://www.arexanspay.my.id/api/qris/${encodeURIComponent(arexansQrisId)}`, {
+              headers: { 'X-API-Key': arexApiKey },
+            });
+            const arexData = await arexResp.json().catch(() => null);
+            const rawQris = arexData?.raw_qris || arexData?.data?.[0]?.raw_qris;
+            if (rawQris) {
+              // Convert static QRIS to dynamic QRIS with exact amount
+              try {
+                let qris = rawQris.replace('010211', '010212');
+                const step2 = qris.split('5802ID');
+                const amountStr = amount.toString();
+                const amountTag = `54${amountStr.length.toString().padStart(2, '0')}${amountStr}`;
+                let toCrc = `${step2[0]}${amountTag}5802ID${step2[1]}`;
+                toCrc = toCrc.slice(0, -4);
+                let crc = 0xFFFF;
+                for (let c = 0; c < toCrc.length; c++) {
+                  crc ^= toCrc.charCodeAt(c) << 8;
+                  for (let i = 0; i < 8; i++) {
+                    if (crc & 0x8000) crc = ((crc << 1) ^ 0x1021) & 0xFFFF;
+                    else crc = (crc << 1) & 0xFFFF;
+                  }
+                }
+                qrString = `${toCrc}${crc.toString(16).toUpperCase().padStart(4, '0')}`;
+              } catch {
+                qrString = rawQris;
+              }
+              qrisUrl = `https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=${encodeURIComponent(qrString)}`;
+            }
+          } catch (aErr) {
+            console.warn('ArexansPay merchant fetch error, fallback:', aErr);
+          }
+        }
+
+        // 3. Try XMPayment Gateway
+        if (!qrString && (activeGateway === 'xmpayment' || activeGateway === 'both')) {
           try {
             const xmpResp = await fetch('https://xmpayment.my.id/api/v1/create', {
               method: 'POST',
               headers: {
-                'Authorization': 'Bearer xmp_live_8YN23PFQXc31HocRExuMHSFgTAnAEaj2',
+                'Authorization': `Bearer ${xmpKey}`,
                 'Content-Type': 'application/json',
               },
               body: JSON.stringify({
@@ -606,7 +644,7 @@ export async function handleFunctionsRequest(req: any, res: any): Promise<boolea
               }),
             });
 
-            const xmpData = await xmpResp.json();
+            const xmpData = await xmpResp.json().catch(() => null);
             if (xmpData && xmpData.data) {
               qrString = xmpData.data.qr_string || '';
               totalAmount = xmpData.data.total_amount || amount;
@@ -617,23 +655,28 @@ export async function handleFunctionsRequest(req: any, res: any): Promise<boolea
           }
         }
 
+        // 4. Guaranteed Dynamic Fallback
         if (!qrString) {
           qrString = `00020101021226670014ID.LINKAJA.WWW01189360091438927000000215${orderId}51440014ID.CO.QRIS.WWW0215ID102002100000052045812530336054${amount}5802ID5912AREXANSTOOLS6007JAKARTA61051011062200116${orderId}6304`;
           qrisUrl = `https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=${encodeURIComponent(qrString)}`;
         }
 
         // Insert into Cloud SQL transactions
-        const clientIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || 'unknown';
-        await pool.query(
-          `INSERT INTO transactions (id, transaction_id, customer_name, customer_whatsapp, package_name, package_duration, original_amount, total_amount, status, qr_string, license_key, expires_at, device_id, ip_address, created_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, now())`,
-          [
-            orderId, orderId, customerName || 'Customer', customerWhatsapp || null,
-            packageName || 'NORMAL', packageDuration || 1, amount, totalAmount,
-            'pending', qrString, customerLicenseKey || null, expiresAt.toISOString(),
-            deviceId || null, clientIp
-          ]
-        );
+        try {
+          const clientIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || 'unknown';
+          await pool.query(
+            `INSERT INTO transactions (id, transaction_id, customer_name, customer_whatsapp, package_name, package_duration, original_amount, total_amount, status, qr_string, license_key, expires_at, device_id, ip_address, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, now())`,
+            [
+              orderId, orderId, customerName || 'Customer', customerWhatsapp || null,
+              packageName || 'NORMAL', packageDuration, amount, totalAmount,
+              'pending', qrString, customerLicenseKey || null, expiresAt.toISOString(),
+              deviceId || null, clientIp
+            ]
+          );
+        } catch (dbErr) {
+          console.warn('Failed to record transaction to DB:', dbErr);
+        }
 
         if (body.is_simulation || body.isSimulation) {
           setTimeout(async () => {
@@ -645,7 +688,7 @@ export async function handleFunctionsRequest(req: any, res: any): Promise<boolea
             } catch (err) {
               console.warn('Simulation fulfill error:', err);
             }
-          }, 6000);
+          }, 5000);
         }
 
         res.statusCode = 200;

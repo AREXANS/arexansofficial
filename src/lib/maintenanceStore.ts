@@ -83,22 +83,9 @@ const safeSaveSetting = async (key: string, value: string, desc?: string) => {
 };
 
 /**
- * Get current maintenance state from Supabase or localStorage
+ * Get current maintenance state from PostgreSQL database (Realtime)
  */
 export const getMaintenanceState = async (): Promise<MaintenanceState> => {
-  let localState = DEFAULT_MAINTENANCE_STATE;
-  let localUpdatedAt = 0;
-  try {
-    const raw = localStorage.getItem(STORAGE_MAINTENANCE_KEY);
-    if (raw) {
-      const parsedLocal = JSON.parse(raw);
-      localState = { ...DEFAULT_MAINTENANCE_STATE, ...parsedLocal };
-      if (parsedLocal.updatedAt) {
-        localUpdatedAt = new Date(parsedLocal.updatedAt).getTime();
-      }
-    }
-  } catch {}
-
   try {
     const { data } = await supabase
       .from('app_settings')
@@ -108,38 +95,25 @@ export const getMaintenanceState = async (): Promise<MaintenanceState> => {
 
     if (data?.value) {
       const parsed = JSON.parse(data.value);
-      const remoteUpdatedAt = data.updated_at
-        ? new Date(data.updated_at).getTime()
-        : (parsed.updatedAt ? new Date(parsed.updatedAt).getTime() : 0);
-
-      // If local state was modified recently (within 15s) or has newer timestamp, keep local state
-      if (localUpdatedAt > 0 && (Date.now() - localUpdatedAt < 15000 || localUpdatedAt > remoteUpdatedAt)) {
-        return localState;
-      }
-
-      const merged = { ...DEFAULT_MAINTENANCE_STATE, ...parsed };
-      localStorage.setItem(STORAGE_MAINTENANCE_KEY, JSON.stringify(merged));
-      return merged;
+      return { ...DEFAULT_MAINTENANCE_STATE, ...parsed };
     }
   } catch (err) {
-    console.warn('[MaintenanceStore] Failed to fetch state from Supabase:', err);
+    console.warn('[MaintenanceStore] Failed to fetch state from DB:', err);
   }
 
-  return localState;
+  return DEFAULT_MAINTENANCE_STATE;
 };
 
 /**
- * Save maintenance state to Supabase & localStorage with immediate local propagation
+ * Save maintenance state to PostgreSQL DB with immediate propagation
  */
 export const saveMaintenanceState = async (state: MaintenanceState): Promise<void> => {
   const json = JSON.stringify({ ...state, updatedAt: new Date().toISOString() });
   try {
-    localStorage.setItem(STORAGE_MAINTENANCE_KEY, json);
     window.dispatchEvent(new CustomEvent('maintenance_state_changed', { detail: state }));
-    window.dispatchEvent(new Event('storage'));
   } catch {}
 
-  // Persist product_maintenance_state
+  // Persist product_maintenance_state in DB
   await safeSaveSetting('product_maintenance_state', json, 'Product maintenance control state');
 
   // Sync maintenance_mode: true ONLY if global maintenance is ON (so partial tools maintenance does not block entire site)
