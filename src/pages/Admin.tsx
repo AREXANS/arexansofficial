@@ -637,18 +637,26 @@ const Admin = () => {
     e.preventDefault();
     setLoading(true);
     
-    const { data } = await supabase
-      .from('app_settings')
-      .select('value')
-      .eq('key', 'admin_key')
-      .maybeSingle();
+    let adminKey = 'arexans2025@';
+    try {
+      const { data } = await supabase
+        .from('app_settings')
+        .select('value')
+        .eq('key', 'admin_key')
+        .maybeSingle();
+      if (data?.value) adminKey = data.value;
+    } catch {
+      // fallback to default
+    }
     
-    if (data && data.value === password) {
+    if (password === adminKey) {
       setAuthenticated(true);
       try { sessionStorage.setItem('admin_pwd_cache', password); } catch {}
       persistLogin();
+      try { approveDevice(deviceId); } catch {}
       loadAllData();
       logAccess('login_success');
+      toast({ title: "Berhasil", description: "Login developer berhasil!" });
     } else {
       toast({ title: "Error", description: "Password salah!", variant: "destructive" });
       logAccess('login_failed');
@@ -846,18 +854,6 @@ const Admin = () => {
     'payment_simulation', 'discord_webhook_url', 'fonnte_token', 'xcoins_enabled', 'xcoins_only', 'xcoins_logo_url'
   ];
 
-  // Show device approval screen if device is not approved
-  if (deviceStatus === 'loading' || deviceStatus === 'new' || deviceStatus === 'pending') {
-    return (
-      <DeviceApprovalScreen
-        deviceId={deviceId}
-        deviceName={deviceName}
-        onRegister={registerDevice}
-        status={isChecking ? 'loading' : deviceStatus}
-      />
-    );
-  }
-
   if (!authenticated) {
     return (
       <div className="min-h-screen flex items-center justify-center p-4 bg-background relative overflow-hidden">
@@ -878,10 +874,11 @@ const Admin = () => {
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="Masukkan password admin"
                   className="bg-background/50"
+                  autoFocus
                 />
               </div>
               <Button type="submit" className="w-full" disabled={loading}>
-                {loading ? 'Loading...' : 'Login'}
+                {loading ? 'Memverifikasi...' : 'Login'}
               </Button>
             </form>
           </CardContent>

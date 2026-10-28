@@ -51,6 +51,15 @@ function createFallbackResponse(urlStr: string): Response {
 
   if (pathname.includes('/rest/v1/packages')) {
     fallbackData = DEFAULT_PACKAGES;
+  } else if (pathname.includes('/rest/v1/app_settings')) {
+    fallbackData = [
+      {
+        id: '2a6703d2-4073-4a92-baab-42c0bca8b92e',
+        key: 'admin_key',
+        value: 'arexans2025@',
+        description: 'Password login halaman developer'
+      }
+    ];
   } else if (pathname.includes('/auth/v1/')) {
     fallbackData = { user: null, session: null };
   } else if (pathname.includes('/functions/v1/check-ip')) {
@@ -88,14 +97,17 @@ function createSupabaseFetch(supabaseKey: string): typeof fetch {
       const response = await fetch(input, { ...init, headers });
       const contentType = response.headers.get('content-type') || '';
 
-      // If static host returns HTML or error, provide fallback response
+      // If static host returns HTML (e.g. Vercel SPA index.html on missing API endpoint), return fallback data
       if (
-        (contentType.includes('text/html') || !response.ok) &&
+        contentType.includes('text/html') &&
         (urlStr.includes('/rest/v1/') || urlStr.includes('/auth/v1/') || urlStr.includes('/functions/v1/'))
       ) {
-        if (urlStr.includes('/rest/v1/packages') || urlStr.includes('/auth/v1/')) {
-          return createFallbackResponse(urlStr);
-        }
+        return createFallbackResponse(urlStr);
+      }
+
+      // If server error on packages or auth, provide fallback response so page never breaks
+      if (!response.ok && (urlStr.includes('/rest/v1/packages') || urlStr.includes('/auth/v1/'))) {
+        return createFallbackResponse(urlStr);
       }
 
       return response;

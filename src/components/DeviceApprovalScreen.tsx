@@ -37,6 +37,15 @@ const DeviceApprovalScreen = ({ deviceId, deviceName, ipAddress, onRegister, sta
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
+  const [showSkip, setShowSkip] = useState(false);
+
+  useEffect(() => {
+    if (status === 'loading') {
+      const timer = setTimeout(() => setShowSkip(true), 2000);
+      return () => clearTimeout(timer);
+    }
+  }, [status]);
+
   if (status === 'loading') {
     return (
       <div className="min-h-screen flex items-center justify-center p-4 bg-background relative overflow-hidden">
@@ -59,6 +68,14 @@ const DeviceApprovalScreen = ({ deviceId, deviceName, ipAddress, onRegister, sta
                 <div className="w-2 h-2 rounded-full bg-primary animate-bounce" style={{ animationDelay: '150ms' }} />
                 <div className="w-2 h-2 rounded-full bg-primary animate-bounce" style={{ animationDelay: '300ms' }} />
               </div>
+              {showSkip && (
+                <Button
+                  onClick={handleRegister}
+                  className="mt-4 w-full bg-primary hover:bg-primary/90 text-primary-foreground font-semibold"
+                >
+                  Lanjutkan Masuk ke Dashboard
+                </Button>
+              )}
             </div>
           </CardContent>
         </Card>

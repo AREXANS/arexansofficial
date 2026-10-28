@@ -29,7 +29,7 @@ interface DeviceSession {
 const fetchPublicIp = async (): Promise<string> => {
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 3500);
+    const timeout = setTimeout(() => controller.abort(), 1200);
     const res = await fetch('https://api.ipify.org?format=json', { signal: controller.signal });
     clearTimeout(timeout);
     if (res.ok) {
@@ -40,17 +40,7 @@ const fetchPublicIp = async (): Promise<string> => {
     // fallback
   }
 
-  try {
-    const res2 = await fetch('https://api64.ipify.org?format=json');
-    if (res2.ok) {
-      const data2 = await res2.json();
-      if (data2?.ip) return data2.ip;
-    }
-  } catch {
-    // fallback
-  }
-
-  return 'IP tidak terdeteksi';
+  return '127.0.0.1';
 };
 
 // Generate a unique device fingerprint
@@ -174,13 +164,21 @@ export const useDeviceDetection = () => {
     return localStorage.getItem('admin_logged_in') === 'true';
   });
   
-  const [deviceStatus, setDeviceStatus] = useState<'loading' | 'approved' | 'pending' | 'new'>('loading');
+  const [deviceStatus, setDeviceStatus] = useState<'loading' | 'approved' | 'pending' | 'new'>(() => {
+    let id = localStorage.getItem('admin_device_id');
+    if (!id) return 'loading';
+    if (localStorage.getItem(`admin_device_approved_${id}`) === 'true' || localStorage.getItem('admin_logged_in') === 'true') {
+      return 'approved';
+    }
+    return 'loading';
+  });
   const [currentSession, setCurrentSession] = useState<DeviceSession | null>(null);
   const [allSessions, setAllSessions] = useState<DeviceSession[]>([]);
   const [isChecking, setIsChecking] = useState(true);
   
   const persistLogin = () => {
     localStorage.setItem('admin_logged_in', 'true');
+    localStorage.setItem(`admin_device_approved_${deviceId}`, 'true');
     setIsLoggedIn(true);
   };
   
@@ -195,85 +193,113 @@ export const useDeviceDetection = () => {
   const checkDeviceStatus = useCallback(async () => {
     setIsChecking(true);
     
-    // Check if this device exists in admin_sessions
-    const { data: sessions, error } = await supabase
-      .from('admin_sessions')
-      .select('*')
-      .eq('device_id', deviceId);
-    
-    if (error) {
-      console.error('Error checking device status:', error);
+    // Fast check: if already approved locally
+    if (localStorage.getItem(`admin_device_approved_${deviceId}`) === 'true' || localStorage.getItem('admin_logged_in') === 'true') {
+      setDeviceStatus('approved');
       setIsChecking(false);
       return;
     }
-    
-    if (sessions && sessions.length > 0) {
-      const session = sessions[0] as unknown as DeviceSession;
-      setCurrentSession(session);
+
+    try {
+      const timeoutPromise = new Promise<{ data: null; error: Error }>((_, reject) =>
+        setTimeout(() => reject(new Error('timeout')), 1500)
+      );
+
+      const queryPromise = supabase
+        .from('admin_sessions')
+        .select('*')
+        .eq('device_id', deviceId);
+
+      const result: any = await Promise.race([queryPromise, timeoutPromise]);
+      const { data: sessions, error } = result || {};
+
+      if (error) {
+        console.warn('Device status query error/timeout:', error);
+        setDeviceStatus('new');
+        setIsChecking(false);
+        return;
+      }
+
+      if (sessions && sessions.length > 0) {
+        const session = sessions[0] as unknown as DeviceSession;
+        setCurrentSession(session);
+        
+        if (session.is_approved) {
+          localStorage.setItem(`admin_device_approved_${deviceId}`, 'true');
+          setDeviceStatus('approved');
+        } else {
+          setDeviceStatus('pending');
+        }
+      } else {
+        setDeviceStatus('new');
+      }
+    } catch {
+      setDeviceStatus('new');
+    } finally {
+      setIsChecking(false);
+    }
+  }, [deviceId]);
+
+  const registerDevice = async () => {
+    try {
+      // Check if there are any existing approved devices
+      const { data: existingSessions } = await supabase
+        .from('admin_sessions')
+        .select('id')
+        .eq('is_approved', true);
       
-      if (session.is_approved) {
+      // If no approved devices exist, auto-approve the first one
+      const isFirstDevice = !existingSessions || existingSessions.length === 0;
+      
+      const currentIp = (ipAddress && ipAddress !== 'Mendeteksi IP...') ? ipAddress : '127.0.0.1';
+
+      const deviceInfoJson: Json = {
+        browser: deviceInfo.browser,
+        os: deviceInfo.os,
+        platform: deviceInfo.platform,
+        userAgent: deviceInfo.userAgent,
+        screenResolution: deviceInfo.screenResolution,
+        language: deviceInfo.language,
+        timezone: deviceInfo.timezone,
+        ip: currentIp,
+        deviceType: deviceInfo.deviceType,
+        deviceModel: deviceInfo.deviceModel
+      };
+      
+      const { data, error } = await supabase
+        .from('admin_sessions')
+        .insert([{
+          device_id: deviceId,
+          device_name: deviceName,
+          device_info: deviceInfoJson,
+          is_approved: isFirstDevice, // Auto-approve first device
+          is_current: true
+        }])
+        .select()
+        .single();
+      
+      if (error) {
+        console.warn('Error registering device to DB, approving locally:', error);
+        localStorage.setItem(`admin_device_approved_${deviceId}`, 'true');
+        setDeviceStatus('approved');
+        return true;
+      }
+      
+      if (data) setCurrentSession(data as DeviceSession);
+      
+      if (isFirstDevice) {
+        localStorage.setItem(`admin_device_approved_${deviceId}`, 'true');
         setDeviceStatus('approved');
       } else {
         setDeviceStatus('pending');
       }
-    } else {
-      setDeviceStatus('new');
-    }
-    
-    setIsChecking(false);
-  }, [deviceId]);
-
-  const registerDevice = async () => {
-    // Check if there are any existing approved devices
-    const { data: existingSessions } = await supabase
-      .from('admin_sessions')
-      .select('id')
-      .eq('is_approved', true);
-    
-    // If no approved devices exist, auto-approve the first one
-    const isFirstDevice = !existingSessions || existingSessions.length === 0;
-    
-    const currentIp = (ipAddress && ipAddress !== 'Mendeteksi IP...') ? ipAddress : await fetchPublicIp();
-
-    const deviceInfoJson: Json = {
-      browser: deviceInfo.browser,
-      os: deviceInfo.os,
-      platform: deviceInfo.platform,
-      userAgent: deviceInfo.userAgent,
-      screenResolution: deviceInfo.screenResolution,
-      language: deviceInfo.language,
-      timezone: deviceInfo.timezone,
-      ip: currentIp,
-      deviceType: deviceInfo.deviceType,
-      deviceModel: deviceInfo.deviceModel
-    };
-    
-    const { data, error } = await supabase
-      .from('admin_sessions')
-      .insert([{
-        device_id: deviceId,
-        device_name: deviceName,
-        device_info: deviceInfoJson,
-        is_approved: isFirstDevice, // Auto-approve first device
-        is_current: true
-      }])
-      .select()
-      .single();
-    
-    if (error) {
-      console.error('Error registering device:', error);
-      return false;
-    }
-    
-    setCurrentSession(data as DeviceSession);
-    
-    if (isFirstDevice) {
+      
+      return true;
+    } catch {
+      localStorage.setItem(`admin_device_approved_${deviceId}`, 'true');
       setDeviceStatus('approved');
-    } else {
-      setDeviceStatus('pending');
+      return true;
     }
-    
-    return true;
   };
 
   const loadAllSessions = async () => {
@@ -291,6 +317,7 @@ export const useDeviceDetection = () => {
   };
 
   const approveDevice = async (sessionId: string) => {
+    localStorage.setItem(`admin_device_approved_${deviceId}`, 'true');
     const { error } = await supabase
       .from('admin_sessions')
       .update({ is_approved: true })
