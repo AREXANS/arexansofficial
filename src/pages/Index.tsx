@@ -120,6 +120,7 @@ const Index = () => {
     transactionId: string;
     qr_string: string;
     qris_url: string;
+    payment_url?: string;
     totalAmount: number;
     expiresAt: string;
     licenseKey: string;
@@ -134,6 +135,7 @@ const Index = () => {
       transactionId: order.transactionId,
       qr_string: order.qr_string,
       qris_url: order.qris_url,
+      payment_url: order.payment_url,
       totalAmount: order.totalAmount,
       expiresAt: order.expiresAt,
       productId: order.productId,
@@ -417,8 +419,8 @@ const Index = () => {
       calculatedAmount = discountedAmount && discountedAmount > 0 ? discountedAmount : fullAmount;
     }
 
-    if (calculatedAmount < 1000) {
-      setErrorMsg("Nominal terlalu kecil untuk QRIS (minimal Rp 1.000)");
+    if (calculatedAmount < 10000) {
+      setErrorMsg("Nominal pemesanan minimal Rp 10.000 untuk checkout Payment Gateway Poketo (QRIS, VA Bank, PayLater, Kartu Debit). Silakan pilih minimal 5 Hari untuk Normal atau 4 Hari untuk VIP.");
       setLoading(false);
       return;
     }

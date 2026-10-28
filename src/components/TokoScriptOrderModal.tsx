@@ -22,6 +22,7 @@ interface TokoScriptOrderModalProps {
     transactionId: string;
     qr_string: string;
     qris_url: string;
+    payment_url?: string;
     totalAmount: number;
     expiresAt: string;
     licenseKey: string;
@@ -111,6 +112,7 @@ export const TokoScriptOrderModal: React.FC<TokoScriptOrderModalProps> = ({
       // Check if Edge Function create-payment is available, otherwise create fallback direct QRIS record
       let qrString = `00020101021226670014ID.LINKAJA.WWW01189360091438927000000215${txId}51440014ID.CO.QRIS.WWW0215ID102002100000052045812530336054${amount}5802ID5912AREXANSTOOLS6007JAKARTA61051011062200116${txId}6304`;
       let qrisUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qrString)}`;
+      let paymentUrl: string | undefined = undefined;
 
       try {
         const { data: edgeData, error: edgeError } = await supabase.functions.invoke('create-payment', {
@@ -128,6 +130,7 @@ export const TokoScriptOrderModal: React.FC<TokoScriptOrderModalProps> = ({
           if (edgeData.transactionId) txId = edgeData.transactionId;
           if (edgeData.qr_string) qrString = edgeData.qr_string;
           if (edgeData.qris_url) qrisUrl = edgeData.qris_url;
+          if (edgeData.payment_url) paymentUrl = edgeData.payment_url;
           if (edgeData.totalAmount) amount = edgeData.totalAmount;
         }
       } catch (e) {
@@ -197,6 +200,7 @@ export const TokoScriptOrderModal: React.FC<TokoScriptOrderModalProps> = ({
         transactionId: txId,
         qr_string: qrString,
         qris_url: qrisUrl,
+        payment_url: paymentUrl,
         totalAmount: amount,
         expiresAt,
         licenseKey: cleanKey,

@@ -382,16 +382,21 @@ const OrderForm: FC<OrderFormProps> = ({
           {/* Duration - hide for LIFETIME */}
           {!isLifetime && (
           <div>
-            <label className="block text-sm font-medium mb-2 text-foreground">Durasi</label>
+            <div className="flex items-center justify-between mb-2">
+              <label className="block text-sm font-medium text-foreground">Durasi</label>
+              <span className="text-[11px] text-primary font-medium">Min. Rp 10.000 untuk Poketo Gateway</span>
+            </div>
             <div className="flex gap-2 mb-2 flex-wrap">
-              <Button type="button" variant={formData.duration === '1h' ? 'default' : 'outline'} size="sm" onClick={() => setFormData({ ...formData, duration: '1h' })} className="flex-1 text-xs">1 Hari</Button>
-              <Button type="button" variant={formData.duration === '2h' ? 'default' : 'outline'} size="sm" onClick={() => setFormData({ ...formData, duration: '2h' })} className="flex-1 text-xs">2 Hari</Button>
+              <Button type="button" variant={formData.duration === (selectedPkg === 'VIP' ? '4h' : '5h') ? 'default' : 'outline'} size="sm" onClick={() => setFormData({ ...formData, duration: selectedPkg === 'VIP' ? '4h' : '5h' })} className="flex-1 text-xs">
+                {selectedPkg === 'VIP' ? '4 Hari' : '5 Hari'}
+              </Button>
               <Button type="button" variant={formData.duration === '7h' ? 'default' : 'outline'} size="sm" onClick={() => setFormData({ ...formData, duration: '7h' })} className="flex-1 text-xs">7 Hari</Button>
+              <Button type="button" variant={formData.duration === '14h' ? 'default' : 'outline'} size="sm" onClick={() => setFormData({ ...formData, duration: '14h' })} className="flex-1 text-xs">14 Hari</Button>
               <Button type="button" variant={formData.duration === '1b' ? 'default' : 'outline'} size="sm" onClick={() => setFormData({ ...formData, duration: '1b' })} className="flex-1 text-xs">1 Bulan</Button>
               <Button type="button" variant={formData.duration === '1t' ? 'default' : 'outline'} size="sm" onClick={() => setFormData({ ...formData, duration: '1t' })} className="flex-1 text-xs">1 Tahun</Button>
             </div>
-            <Input type="text" value={formData.duration} onChange={(e) => setFormData({ ...formData, duration: e.target.value })} placeholder="Atau ketik manual: 7h, 1b, 1t" className="bg-muted/50 border-border focus:border-primary" />
-            <p className="text-xs text-muted-foreground mt-2">Format: angka + h (hari), b (bulan), t (tahun). Contoh: 30h, 1b, 1t</p>
+            <Input type="text" value={formData.duration} onChange={(e) => setFormData({ ...formData, duration: e.target.value })} placeholder="Atau ketik manual: 5h, 7h, 14h, 1b, 1t" className="bg-muted/50 border-border focus:border-primary" />
+            <p className="text-xs text-muted-foreground mt-2">Format: angka + h (hari), b (bulan), t (tahun). Contoh: 5h, 7h, 30h, 1b, 1t</p>
           </div>
           )}
 

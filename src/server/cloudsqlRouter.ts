@@ -520,6 +520,30 @@ export async function handleFunctionsRequest(req: any, res: any): Promise<boolea
         }
       }
 
+      const DEFAULT_AREXANS_QRIS = '00020101021126570011ID.DANA.WWW0118936009153920958133021500000109209581330303UMI51440014ID.CO.QRIS.WWW0215ID10200210000005204581253033605802ID5907AREXANS6011Kota Bekasi61051714862070703A016304CA12';
+
+      function generateDynamicQris(rawStaticQris: string, amt: number): string {
+        try {
+          let qris = rawStaticQris.replace('010211', '010212');
+          const step2 = qris.split('5802ID');
+          const amountStr = Math.round(amt).toString();
+          const amountTag = `54${amountStr.length.toString().padStart(2, '0')}${amountStr}`;
+          let toCrc = `${step2[0]}${amountTag}5802ID${step2[1]}`;
+          toCrc = toCrc.slice(0, -4);
+          let crc = 0xFFFF;
+          for (let c = 0; c < toCrc.length; c++) {
+            crc ^= toCrc.charCodeAt(c) << 8;
+            for (let i = 0; i < 8; i++) {
+              if (crc & 0x8000) crc = ((crc << 1) ^ 0x1021) & 0xFFFF;
+              else crc = (crc << 1) & 0xFFFF;
+            }
+          }
+          return `${toCrc}${crc.toString(16).toUpperCase().padStart(4, '0')}`;
+        } catch {
+          return rawStaticQris;
+        }
+      }
+
       if (funcName === 'create-payment') {
         const rawAmount = Number(body.amount || body.total_amount || 0);
         const amount = Math.max(1000, isNaN(rawAmount) ? 1000 : Math.round(rawAmount));
@@ -549,10 +573,12 @@ export async function handleFunctionsRequest(req: any, res: any): Promise<boolea
         const poketoKey = settingsMap.poketo_api_key || 'sk_live_iZEBli3dV1buw_sFB4DhUfIDVKGp-itZ';
         const arexansApiKey = settingsMap.arexanspay_api_key || 'arexanspay_f63fa727bda01551084e5c87bde526aeb68e1c471ff89fa36d2748b8c25156a3';
         const arexansQrisId = settingsMap.arexanspay_qris_id || 'axspay-duqwono-h3sq-au0s-5h26-v7m2d1oy3c32';
-        const xmpKey = settingsMap.xmpayment_api_key || 'xmp_live_d2b8ea709d5d7a57ff974cd771435e0f58d4da888593350b';
         const cleanCustName = customerName || 'Pelanggan Arexans';
 
-        // 1. Try Poketo Gateway (Default & Recommended)
+        // Poketo minimum requirement is Rp 10.000
+        const poketoAmount = Math.max(10000, Math.round(Number(amount)));
+
+        // 1. Try Poketo Gateway (Default & Recommended - Multi-channel: QRIS, VA, PayLater, Kartu Debit)
         if (activeGateway === 'poketo' || activeGateway === 'both' || !activeGateway) {
           try {
             const poketoResp = await fetch('https://poketo.id/api/v1/invoices', {
@@ -563,7 +589,7 @@ export async function handleFunctionsRequest(req: any, res: any): Promise<boolea
                 'Idempotency-Key': orderId,
               },
               body: JSON.stringify({
-                amount: Math.round(Number(amount)),
+                amount: poketoAmount,
                 title: `Arexans - ${packageName || 'Tools'} (${packageDuration} Hari)`,
                 referenceId: orderId,
                 customer: {
@@ -578,12 +604,14 @@ export async function handleFunctionsRequest(req: any, res: any): Promise<boolea
             if (poketoData?.data) {
               const inv = poketoData.data;
               paymentUrl = inv.paymentUrl || `https://pay.poketo.id/inv/${inv.id}`;
-              totalAmount = inv.totalAmount || amount;
-              qrString = paymentUrl;
-              qrisUrl = `https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=${encodeURIComponent(paymentUrl)}`;
+              totalAmount = inv.totalAmount || poketoAmount;
               if (inv.expiresAt) {
                 expiresAt = new Date(inv.expiresAt);
               }
+
+              // Generate real dynamic EMVCo QRIS string matching totalAmount so mobile banking scans it immediately!
+              qrString = generateDynamicQris(DEFAULT_AREXANS_QRIS, totalAmount);
+              qrisUrl = `https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=${encodeURIComponent(qrString)}`;
             }
           } catch (pErr) {
             console.warn('Poketo create invoice exception, fallback:', pErr);
@@ -599,26 +627,7 @@ export async function handleFunctionsRequest(req: any, res: any): Promise<boolea
             const arexData = await arexResp.json().catch(() => null);
             const rawQris = arexData?.raw_qris || arexData?.data?.[0]?.raw_qris;
             if (rawQris) {
-              // Convert static QRIS to dynamic QRIS with exact amount
-              try {
-                let qris = rawQris.replace('010211', '010212');
-                const step2 = qris.split('5802ID');
-                const amountStr = amount.toString();
-                const amountTag = `54${amountStr.length.toString().padStart(2, '0')}${amountStr}`;
-                let toCrc = `${step2[0]}${amountTag}5802ID${step2[1]}`;
-                toCrc = toCrc.slice(0, -4);
-                let crc = 0xFFFF;
-                for (let c = 0; c < toCrc.length; c++) {
-                  crc ^= toCrc.charCodeAt(c) << 8;
-                  for (let i = 0; i < 8; i++) {
-                    if (crc & 0x8000) crc = ((crc << 1) ^ 0x1021) & 0xFFFF;
-                    else crc = (crc << 1) & 0xFFFF;
-                  }
-                }
-                qrString = `${toCrc}${crc.toString(16).toUpperCase().padStart(4, '0')}`;
-              } catch {
-                qrString = rawQris;
-              }
+              qrString = generateDynamicQris(rawQris, amount);
               qrisUrl = `https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=${encodeURIComponent(qrString)}`;
             }
           } catch (aErr) {
@@ -626,38 +635,9 @@ export async function handleFunctionsRequest(req: any, res: any): Promise<boolea
           }
         }
 
-        // 3. Try XMPayment Gateway
-        if (!qrString && (activeGateway === 'xmpayment' || activeGateway === 'both')) {
-          try {
-            const xmpResp = await fetch('https://xmpayment.my.id/api/v1/create', {
-              method: 'POST',
-              headers: {
-                'Authorization': `Bearer ${xmpKey}`,
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({
-                order_id: orderId,
-                amount: amount,
-                customer_name: cleanCustName,
-                customer_email: 'buyer@arexans.my.id',
-                redirect_url: 'https://tools.arexans.my.id',
-              }),
-            });
-
-            const xmpData = await xmpResp.json().catch(() => null);
-            if (xmpData && xmpData.data) {
-              qrString = xmpData.data.qr_string || '';
-              totalAmount = xmpData.data.total_amount || amount;
-              qrisUrl = xmpData.data.checkout_url || xmpData.data.qr_code_url || `https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=${encodeURIComponent(qrString)}`;
-            }
-          } catch (xmpErr) {
-            console.warn('XMPayment create error, fallback:', xmpErr);
-          }
-        }
-
-        // 4. Guaranteed Dynamic Fallback
+        // 3. Fallback to Dynamic EMVCo QRIS
         if (!qrString) {
-          qrString = `00020101021226670014ID.LINKAJA.WWW01189360091438927000000215${orderId}51440014ID.CO.QRIS.WWW0215ID102002100000052045812530336054${amount}5802ID5912AREXANSTOOLS6007JAKARTA61051011062200116${orderId}6304`;
+          qrString = generateDynamicQris(DEFAULT_AREXANS_QRIS, amount);
           qrisUrl = `https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=${encodeURIComponent(qrString)}`;
         }
 

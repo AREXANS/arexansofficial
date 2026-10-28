@@ -29,6 +29,7 @@ interface TokoScriptCatalogProps {
     transactionId: string;
     qr_string: string;
     qris_url: string;
+    payment_url?: string;
     totalAmount: number;
     expiresAt: string;
     licenseKey: string;

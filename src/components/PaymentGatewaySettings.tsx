@@ -494,11 +494,11 @@ export const PaymentGatewaySettings: FC<PaymentGatewaySettingsProps> = ({ onSett
                     <Radio className={`w-4 h-4 ${currentGateway === 'poketo' ? 'text-emerald-400' : 'text-muted-foreground/40'}`} />
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    QRIS Otomatis, VA & E-Wallet via invoice pay.poketo.id.
+                    QRIS Instan, Virtual Account (10 Bank), PayLater & Kartu Debit via pay.poketo.id.
                   </p>
                 </div>
                 <div className="mt-3 flex items-center gap-1.5 text-[11px] text-emerald-400">
-                  <ExternalLink className="w-3 h-3" /> https://poketo.id/docs
+                  <ExternalLink className="w-3 h-3" /> Multi-Metode Lengkap
                 </div>
               </button>
 
