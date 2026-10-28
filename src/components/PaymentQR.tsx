@@ -1,11 +1,12 @@
 import { FC, useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { 
-  Copy, MessageCircle, AlertCircle, RefreshCw, ExternalLink, 
-  QrCode, Building2, CreditCard, Zap, CheckCircle2, Download, Smartphone, ShieldCheck
+  Copy, MessageCircle, AlertCircle, RefreshCw,
+  QrCode, Building2, CreditCard, Zap, CheckCircle2, Download, Smartphone, ShieldCheck, ChevronDown, ChevronUp, Loader2
 } from 'lucide-react';
 import GlobalBackground from './GlobalBackground';
 import { supabase } from '@/integrations/supabase/client';
+import { toast } from '@/hooks/use-toast';
 
 interface SocialLink {
   id: string;
@@ -24,6 +25,12 @@ interface PaymentQRProps {
     qris_url: string;
     payment_url?: string;
     totalAmount: number;
+    originalAmount?: number;
+    gateway?: string;
+    isPoketo?: boolean;
+    slug?: string;
+    vaBanks?: Array<{ code: string; name: string }>;
+    quotes?: any;
     expiresAt: string;
     productId?: string;
   };
@@ -37,6 +44,30 @@ interface PaymentQRProps {
 
 type PaymentTab = 'qris' | 'va' | 'paylater' | 'card';
 
+interface VaPaymentInfo {
+  bank: string;
+  bankName: string;
+  vaNumber: string;
+  amount: number;
+  instructions?: {
+    id?: Array<{ channel: string; steps: string[] }>;
+    en?: Array<{ channel: string; steps: string[] }>;
+  };
+}
+
+const DEFAULT_VA_BANKS = [
+  { code: 'BRI', name: 'Bank BRI' },
+  { code: 'BNI', name: 'Bank BNI' },
+  { code: 'PERMATA', name: 'Bank Permata' },
+  { code: 'CIMB', name: 'CIMB Niaga' },
+  { code: 'DANAMON', name: 'Bank Danamon' },
+  { code: 'BTN', name: 'Bank BTN' },
+  { code: 'MAYBANK', name: 'Maybank' },
+  { code: 'BJB', name: 'bank bjb' },
+  { code: 'SINARMAS', name: 'Bank Sinarmas' },
+  { code: 'BNC', name: 'Bank Neo Commerce' },
+];
+
 const PaymentQR: FC<PaymentQRProps> = ({
   packageName,
   paymentData,
@@ -47,12 +78,59 @@ const PaymentQR: FC<PaymentQRProps> = ({
   onRecheck,
   formatRupiah
 }) => {
+  const isPoketo = paymentData.isPoketo ?? (paymentData.gateway === 'poketo' || paymentData.totalAmount >= 10000);
   const [activeTab, setActiveTab] = useState<PaymentTab>('qris');
   const [showContactHint, setShowContactHint] = useState(false);
   const [contactLink, setContactLink] = useState<SocialLink | null>(null);
   const [rechecking, setRechecking] = useState(false);
   const [recheckMsg, setRecheckMsg] = useState('');
   const [copiedQris, setCopiedQris] = useState(false);
+  const [copiedVa, setCopiedVa] = useState(false);
+
+  // VA State
+  const [selectedBank, setSelectedBank] = useState<string>('BRI');
+  const [vaLoading, setVaLoading] = useState(false);
+  const [vaData, setVaData] = useState<VaPaymentInfo | null>(null);
+  const [activeInstructionChannel, setActiveInstructionChannel] = useState<string>('');
+  const [expandedInstructions, setExpandedInstructions] = useState(false);
+
+  // Fetch VA when user switches to VA tab or changes bank
+  const handleSelectBank = async (bankCode: string) => {
+    setSelectedBank(bankCode);
+    const slug = paymentData.slug || (paymentData.payment_url ? paymentData.payment_url.split('/inv/')[1] : '');
+    if (!slug) return;
+
+    setVaLoading(true);
+    try {
+      const res = await supabase.functions.invoke('poketo-va', {
+        body: { slug, bank: bankCode }
+      });
+
+      if (res?.data?.success && res.data.payment) {
+        setVaData(res.data.payment);
+        const steps = res.data.payment.instructions?.id;
+        if (steps && steps.length > 0) {
+          setActiveInstructionChannel(steps[0].channel);
+        }
+      } else {
+        toast({
+          title: 'Gagal Memuat VA',
+          description: res?.data?.error || 'Silakan pilih bank lain.',
+          variant: 'destructive',
+        });
+      }
+    } catch (e: any) {
+      console.warn('Load VA error:', e);
+    } finally {
+      setVaLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'va' && !vaData && isPoketo) {
+      handleSelectBank('BRI');
+    }
+  }, [activeTab, isPoketo]);
 
   const handleRecheck = async () => {
     if (!onRecheck || rechecking) return;
@@ -87,7 +165,6 @@ const PaymentQR: FC<PaymentQRProps> = ({
     };
 
     fetchContactLink();
-
     return () => clearTimeout(timer);
   }, []);
 
@@ -107,8 +184,16 @@ const PaymentQR: FC<PaymentQRProps> = ({
     if (paymentData.qr_string) {
       navigator.clipboard.writeText(paymentData.qr_string);
       setCopiedQris(true);
+      toast({ title: 'Tersalin!', description: 'String QRIS berhasil disalin ke clipboard.' });
       setTimeout(() => setCopiedQris(false), 2500);
     }
+  };
+
+  const copyVaNumber = (va: string) => {
+    navigator.clipboard.writeText(va);
+    setCopiedVa(true);
+    toast({ title: 'Nomor VA Disalin!', description: `${va} siap digunakan di aplikasi m-banking/ATM.` });
+    setTimeout(() => setCopiedVa(false), 2500);
   };
 
   const downloadQrCode = () => {
@@ -121,11 +206,8 @@ const PaymentQR: FC<PaymentQRProps> = ({
     document.body.removeChild(link);
   };
 
-  const openPoketo = () => {
-    if (paymentData.payment_url) {
-      window.open(paymentData.payment_url, '_blank', 'noopener,noreferrer');
-    }
-  };
+  const currentVaInstructions = vaData?.instructions?.id || [];
+  const currentInstructionStep = currentVaInstructions.find(i => i.channel === activeInstructionChannel) || currentVaInstructions[0];
 
   return (
     <div className="min-h-screen flex items-center justify-center p-3 sm:p-4 bg-background relative overflow-hidden">
@@ -144,10 +226,12 @@ const PaymentQR: FC<PaymentQRProps> = ({
         </div>
 
         <h2 className="text-xl sm:text-2xl font-display font-bold text-foreground">
-          Pilih Metode Pembayaran
+          {isPoketo ? 'Pembayaran Realtime Poketo' : 'Scan QRIS untuk Membayar'}
         </h2>
         <p className="text-muted-foreground text-xs sm:text-sm mt-1 mb-4">
-          Poketo Gateway · QRIS, Virtual Account, PayLater & Kartu Debit
+          {isPoketo 
+            ? 'Pilih metode pembayaran langsung di bawah ini tanpa berpindah halaman'
+            : 'Gateway ArexansPay & XMPayment · Scan instan semua e-wallet & mobile banking'}
         </p>
 
         {errorMsg && (
@@ -160,83 +244,69 @@ const PaymentQR: FC<PaymentQRProps> = ({
         <div className={`p-4 rounded-xl mb-5 border ${roleTintClass} bg-card/60`}>
           <p className="text-muted-foreground text-xs uppercase tracking-wider mb-1 font-medium">Total Tagihan Pembayaran</p>
           <p className={`text-2xl sm:text-3xl font-display font-bold ${roleTextClass}`}>
-            {formatRupiah(paymentData.totalAmount)}
+            {formatRupiah(activeTab === 'va' && vaData ? vaData.amount : paymentData.totalAmount)}
           </p>
-          <p className="text-[11px] text-muted-foreground mt-1 flex items-center justify-center gap-1">
-            <span>Nominal tepat & otomatis terverifikasi tanpa biaya tersembunyi</span>
-          </p>
-        </div>
-
-        {/* Global Poketo Checkout Button */}
-        {paymentData.payment_url && (
-          <div className="mb-5">
-            <button
-              onClick={openPoketo}
-              className="group w-full py-3 px-4 rounded-xl bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-600 hover:from-emerald-600 hover:via-teal-600 hover:to-cyan-700 text-white font-bold text-sm shadow-lg shadow-teal-500/25 transition-all flex items-center justify-center gap-2"
-            >
-              <Zap className="w-4 h-4 fill-current group-hover:scale-110 transition-transform" />
-              <span>Buka Pembayaran Poketo (Semua Metode)</span>
-              <ExternalLink className="w-4 h-4 ml-1 opacity-80" />
-            </button>
-            <p className="text-[11px] text-muted-foreground mt-1.5 text-center">
-              Pilihan lengkap: QRIS, Transfer VA Bank, PayLater cicilan, & Kartu Debit
-            </p>
+          <div className="flex items-center justify-center gap-2 mt-1.5 text-[11px] text-muted-foreground">
+            <span className="inline-block w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            <span>Verifikasi Realtime Otomatis · Tanpa Perlu Kirim Bukti</span>
           </div>
-        )}
-
-        {/* Multi-Method Tabs */}
-        <div className="grid grid-cols-4 gap-1.5 p-1 rounded-xl bg-muted/60 mb-5 border border-white/5 text-xs">
-          <button
-            type="button"
-            onClick={() => setActiveTab('qris')}
-            className={`py-2 px-1 rounded-lg font-semibold flex flex-col sm:flex-row items-center justify-center gap-1 transition-all ${
-              activeTab === 'qris' 
-                ? 'bg-background text-primary shadow-sm border border-primary/20' 
-                : 'text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            <QrCode className="w-4 h-4" />
-            <span>QRIS</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('va')}
-            className={`py-2 px-1 rounded-lg font-semibold flex flex-col sm:flex-row items-center justify-center gap-1 transition-all ${
-              activeTab === 'va' 
-                ? 'bg-background text-primary shadow-sm border border-primary/20' 
-                : 'text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            <Building2 className="w-4 h-4" />
-            <span>VA Bank</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('paylater')}
-            className={`py-2 px-1 rounded-lg font-semibold flex flex-col sm:flex-row items-center justify-center gap-1 transition-all ${
-              activeTab === 'paylater' 
-                ? 'bg-background text-primary shadow-sm border border-primary/20' 
-                : 'text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            <Zap className="w-4 h-4" />
-            <span>PayLater</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('card')}
-            className={`py-2 px-1 rounded-lg font-semibold flex flex-col sm:flex-row items-center justify-center gap-1 transition-all ${
-              activeTab === 'card' 
-                ? 'bg-background text-primary shadow-sm border border-primary/20' 
-                : 'text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            <CreditCard className="w-4 h-4" />
-            <span>Kartu Debit</span>
-          </button>
         </div>
 
-        {/* Tab 1: QRIS */}
+        {/* Multi-Method Tabs ONLY for Poketo (>= Rp 10.000) */}
+        {isPoketo ? (
+          <div className="grid grid-cols-4 gap-1.5 p-1 rounded-xl bg-muted/60 mb-5 border border-white/5 text-xs">
+            <button
+              type="button"
+              onClick={() => setActiveTab('qris')}
+              className={`py-2 px-1 rounded-lg font-semibold flex flex-col sm:flex-row items-center justify-center gap-1 transition-all ${
+                activeTab === 'qris' 
+                  ? 'bg-background text-primary shadow-sm border border-primary/20' 
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              <QrCode className="w-4 h-4" />
+              <span>QRIS</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('va')}
+              className={`py-2 px-1 rounded-lg font-semibold flex flex-col sm:flex-row items-center justify-center gap-1 transition-all ${
+                activeTab === 'va' 
+                  ? 'bg-background text-primary shadow-sm border border-primary/20' 
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              <Building2 className="w-4 h-4" />
+              <span>VA Bank</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('paylater')}
+              className={`py-2 px-1 rounded-lg font-semibold flex flex-col sm:flex-row items-center justify-center gap-1 transition-all ${
+                activeTab === 'paylater' 
+                  ? 'bg-background text-primary shadow-sm border border-primary/20' 
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              <Zap className="w-4 h-4" />
+              <span>PayLater</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('card')}
+              className={`py-2 px-1 rounded-lg font-semibold flex flex-col sm:flex-row items-center justify-center gap-1 transition-all ${
+                activeTab === 'card' 
+                  ? 'bg-background text-primary shadow-sm border border-primary/20' 
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              <CreditCard className="w-4 h-4" />
+              <span>Kartu</span>
+            </button>
+          </div>
+        ) : null}
+
+        {/* Tab 1: QRIS Instan */}
         {activeTab === 'qris' && (
           <div className="space-y-4 animate-fade-in">
             {/* QR Code container */}
@@ -262,7 +332,7 @@ const PaymentQR: FC<PaymentQRProps> = ({
             </div>
 
             <p className="text-xs text-muted-foreground">
-              Scan QR di atas menggunakan aplikasi mobile banking atau e-wallet apa saja.
+              Buka aplikasi mobile banking atau e-wallet Anda, pilih menu Scan / QRIS, lalu scan kode QR di atas.
             </p>
 
             <div className="flex items-center justify-center gap-2 pt-1">
@@ -274,7 +344,7 @@ const PaymentQR: FC<PaymentQRProps> = ({
                 className="text-xs gap-1.5"
               >
                 <Download className="w-3.5 h-3.5" />
-                Simpan Gambar QR
+                Simpan QR
               </Button>
               <Button
                 type="button"
@@ -284,103 +354,153 @@ const PaymentQR: FC<PaymentQRProps> = ({
                 className="text-xs gap-1.5"
               >
                 {copiedQris ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                {copiedQris ? 'Tersalin!' : 'Salin String QRIS'}
+                {copiedQris ? 'Tersalin!' : 'Salin Kode QRIS'}
               </Button>
             </div>
           </div>
         )}
 
-        {/* Tab 2: Virtual Account */}
-        {activeTab === 'va' && (
+        {/* Tab 2: Virtual Account Realtime (In-App Poketo) */}
+        {activeTab === 'va' && isPoketo && (
           <div className="space-y-4 text-left animate-fade-in p-4 rounded-xl bg-card/60 border border-border/60">
-            <div className="flex items-center gap-2 text-foreground font-semibold text-sm border-b border-border/50 pb-2">
-              <Building2 className="w-4 h-4 text-primary" />
-              <span>Transfer Virtual Account (VA) Bank</span>
-            </div>
-
-            <p className="text-xs text-muted-foreground">
-              Dapatkan nomor VA unik Anda untuk pembayaran instan melalui ATM, Mobile Banking, atau Internet Banking.
-            </p>
-
-            {/* Bank list grid */}
-            <div className="grid grid-cols-2 gap-2 text-xs">
-              <div className="p-2.5 rounded-lg bg-muted/50 border border-white/5 flex items-center justify-between">
-                <span className="font-semibold text-foreground">Bank BRI</span>
-                <span className="text-[10px] text-emerald-400 font-mono">Otomatis</span>
-              </div>
-              <div className="p-2.5 rounded-lg bg-muted/50 border border-white/5 flex items-center justify-between">
-                <span className="font-semibold text-foreground">Bank BNI</span>
-                <span className="text-[10px] text-emerald-400 font-mono">Otomatis</span>
-              </div>
-              <div className="p-2.5 rounded-lg bg-muted/50 border border-white/5 flex items-center justify-between">
-                <span className="font-semibold text-foreground">Bank Permata</span>
-                <span className="text-[10px] text-emerald-400 font-mono">Otomatis</span>
-              </div>
-              <div className="p-2.5 rounded-lg bg-muted/50 border border-white/5 flex items-center justify-between">
-                <span className="font-semibold text-foreground">CIMB Niaga</span>
-                <span className="text-[10px] text-emerald-400 font-mono">Otomatis</span>
-              </div>
-              <div className="p-2.5 rounded-lg bg-muted/50 border border-white/5 flex items-center justify-between">
-                <span className="font-semibold text-foreground">Bank Danamon</span>
-                <span className="text-[10px] text-emerald-400 font-mono">Otomatis</span>
-              </div>
-              <div className="p-2.5 rounded-lg bg-muted/50 border border-white/5 flex items-center justify-between">
-                <span className="font-semibold text-foreground">Bank Mandiri / Lainnya</span>
-                <span className="text-[10px] text-emerald-400 font-mono">Otomatis</span>
+            <div>
+              <Label className="text-xs font-semibold text-foreground mb-2 block">
+                Pilih Bank Virtual Account:
+              </Label>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+                {(paymentData.vaBanks && paymentData.vaBanks.length > 0 ? paymentData.vaBanks : DEFAULT_VA_BANKS).map(b => (
+                  <button
+                    key={b.code}
+                    type="button"
+                    onClick={() => handleSelectBank(b.code)}
+                    className={`p-2 rounded-lg text-xs font-semibold border transition-all text-left flex items-center justify-between ${
+                      selectedBank === b.code
+                        ? 'border-primary bg-primary/15 text-primary ring-1 ring-primary'
+                        : 'border-border/60 bg-muted/30 text-muted-foreground hover:bg-muted/50 hover:text-foreground'
+                    }`}
+                  >
+                    <span className="truncate">{b.name}</span>
+                    {selectedBank === b.code && <CheckCircle2 className="w-3 h-3 shrink-0 text-primary" />}
+                  </button>
+                ))}
               </div>
             </div>
 
-            <Button
-              onClick={openPoketo}
-              className="w-full bg-primary hover:bg-primary/90 text-primary-foreground font-semibold gap-2 mt-2"
-            >
-              <span>Dapatkan Nomor VA di Poketo</span>
-              <ExternalLink className="w-4 h-4" />
-            </Button>
+            {/* VA Number Card */}
+            {vaLoading ? (
+              <div className="py-8 text-center text-muted-foreground text-xs flex flex-col items-center gap-2">
+                <Loader2 className="w-6 h-6 animate-spin text-primary" />
+                <span>Membuat Nomor Virtual Account {selectedBank}...</span>
+              </div>
+            ) : vaData ? (
+              <div className="space-y-3 pt-2">
+                <div className="p-4 rounded-xl bg-gradient-to-br from-primary/10 via-primary/5 to-transparent border border-primary/30">
+                  <div className="flex items-center justify-between text-xs text-muted-foreground mb-1">
+                    <span>Nomor Virtual Account {vaData.bankName || vaData.bank}:</span>
+                    <span className="text-[10px] bg-emerald-500/10 text-emerald-400 font-bold px-2 py-0.5 rounded">Aktif</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-2 mt-2">
+                    <code className="text-lg sm:text-xl font-mono font-bold tracking-wider text-foreground select-all break-all">
+                      {vaData.vaNumber}
+                    </code>
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={() => copyVaNumber(vaData.vaNumber)}
+                      className="shrink-0 gap-1.5 bg-primary text-primary-foreground font-semibold"
+                    >
+                      {copiedVa ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                      <span>{copiedVa ? 'Disalin' : 'Salin'}</span>
+                    </Button>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground mt-2">
+                    Total transfer harus persis: <strong className="text-foreground font-bold">{formatRupiah(vaData.amount)}</strong>
+                  </p>
+                </div>
+
+                {/* Instructions Section */}
+                {currentVaInstructions.length > 0 && (
+                  <div className="border border-border/60 rounded-xl p-3 bg-muted/20">
+                    <button
+                      type="button"
+                      onClick={() => setExpandedInstructions(!expandedInstructions)}
+                      className="w-full flex items-center justify-between text-xs font-semibold text-foreground"
+                    >
+                      <span>Cara Pembayaran {vaData.bankName}</span>
+                      {expandedInstructions ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                    </button>
+
+                    {expandedInstructions && (
+                      <div className="mt-3 pt-3 border-t border-border/40 space-y-3">
+                        <div className="flex gap-1 overflow-x-auto pb-1 text-[11px]">
+                          {currentVaInstructions.map(c => (
+                            <button
+                              key={c.channel}
+                              type="button"
+                              onClick={() => setActiveInstructionChannel(c.channel)}
+                              className={`px-2.5 py-1 rounded-md whitespace-nowrap font-medium transition-all ${
+                                (activeInstructionChannel || currentVaInstructions[0].channel) === c.channel
+                                  ? 'bg-primary text-primary-foreground'
+                                  : 'bg-muted/60 text-muted-foreground hover:text-foreground'
+                              }`}
+                            >
+                              {c.channel}
+                            </button>
+                          ))}
+                        </div>
+
+                        {currentInstructionStep && (
+                          <ol className="list-decimal list-inside space-y-1.5 text-xs text-muted-foreground leading-relaxed">
+                            {currentInstructionStep.steps.map((st, i) => (
+                              <li key={i} className="pl-1 text-foreground/90">{st}</li>
+                            ))}
+                          </ol>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            ) : null}
           </div>
         )}
 
         {/* Tab 3: PayLater */}
-        {activeTab === 'paylater' && (
+        {activeTab === 'paylater' && isPoketo && (
           <div className="space-y-4 text-left animate-fade-in p-4 rounded-xl bg-card/60 border border-border/60">
             <div className="flex items-center gap-2 text-foreground font-semibold text-sm border-b border-border/50 pb-2">
               <Zap className="w-4 h-4 text-amber-400" />
-              <span>PayLater & Cicilan Tanpa Kartu</span>
+              <span>PayLater & Cicilan Realtime</span>
             </div>
 
             <p className="text-xs text-muted-foreground">
-              Beli sekarang, bayar nanti atau gunakan fasilitas cicilan fleksibel dengan akun PayLater Anda.
+              Beli sekarang bayar nanti dengan akun PayLater Anda (Akulaku & Kredivo).
             </p>
 
-            <div className="space-y-2">
-              <div className="p-3 rounded-lg bg-muted/50 border border-white/5 flex items-center justify-between">
-                <div>
-                  <span className="font-bold text-foreground block text-sm">Akulaku PayLater</span>
-                  <span className="text-[11px] text-muted-foreground">Tenor 30 hari atau cicilan 3, 6, 12 bulan</span>
-                </div>
-                <span className="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 text-[10px] font-bold border border-emerald-500/20">Tersedia</span>
+            <div className="p-3 rounded-lg bg-muted/50 border border-white/5 space-y-1">
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-foreground text-sm">Akulaku PayLater</span>
+                <span className="text-[10px] text-emerald-400 font-bold bg-emerald-500/10 px-2 py-0.5 rounded">Tersedia</span>
               </div>
-              <div className="p-3 rounded-lg bg-muted/50 border border-white/5 flex items-center justify-between">
-                <div>
-                  <span className="font-bold text-foreground block text-sm">Kredivo / Cicilan</span>
-                  <span className="text-[11px] text-muted-foreground">Pembayaran bertahap sesuai limit akun Anda</span>
-                </div>
-                <span className="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 text-[10px] font-bold border border-emerald-500/20">Tersedia</span>
-              </div>
+              <p className="text-[11px] text-muted-foreground">
+                Tenor cicilan 30 hari, 3 bulan, 6 bulan, hingga 12 bulan sesuai limit akun Akulaku Anda.
+              </p>
             </div>
 
-            <Button
-              onClick={openPoketo}
-              className="w-full bg-amber-500 hover:bg-amber-600 text-black font-bold gap-2 mt-2"
-            >
-              <span>Bayar via PayLater di Poketo</span>
-              <ExternalLink className="w-4 h-4" />
-            </Button>
+            <div className="p-3 rounded-lg bg-muted/50 border border-white/5 space-y-1">
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-foreground text-sm">Kredivo</span>
+                <span className="text-[10px] text-emerald-400 font-bold bg-emerald-500/10 px-2 py-0.5 rounded">Tersedia</span>
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                Pembayaran cicilan instan tanpa kartu kredit langsung via akun Kredivo.
+              </p>
+            </div>
           </div>
         )}
 
         {/* Tab 4: Kartu Debit / Kredit */}
-        {activeTab === 'card' && (
+        {activeTab === 'card' && isPoketo && (
           <div className="space-y-4 text-left animate-fade-in p-4 rounded-xl bg-card/60 border border-border/60">
             <div className="flex items-center gap-2 text-foreground font-semibold text-sm border-b border-border/50 pb-2">
               <CreditCard className="w-4 h-4 text-blue-400" />
@@ -388,23 +508,13 @@ const PaymentQR: FC<PaymentQRProps> = ({
             </div>
 
             <p className="text-xs text-muted-foreground">
-              Pembayaran instan dan terlindungi 3D Secure dengan verifikasi OTP langsung dari bank penerbit kartu Anda.
+              Pembayaran aman dengan kartu berlogo Visa, Mastercard, atau GPN yang terproteksi 3D Secure dengan OTP resmi bank.
             </p>
 
             <div className="p-3 rounded-lg bg-muted/50 border border-white/5 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="font-mono text-sm font-bold text-foreground">VISA / Mastercard / GPN</span>
-              </div>
+              <span className="font-mono text-sm font-bold text-foreground">VISA / Mastercard / GPN</span>
               <span className="text-[10px] text-emerald-400 font-bold bg-emerald-500/10 px-2 py-0.5 rounded">3D Secure</span>
             </div>
-
-            <Button
-              onClick={openPoketo}
-              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold gap-2 mt-2"
-            >
-              <span>Bayar via Kartu di Poketo</span>
-              <ExternalLink className="w-4 h-4" />
-            </Button>
           </div>
         )}
 
@@ -442,8 +552,8 @@ const PaymentQR: FC<PaymentQRProps> = ({
               <div className="flex items-start gap-2.5">
                 <AlertCircle className="w-4 h-4 text-primary shrink-0 mt-0.5" />
                 <div className="text-xs">
-                  <p className="text-foreground font-semibold">Sudah bayar tapi belum terverifikasi?</p>
-                  <p className="text-muted-foreground mt-0.5 mb-2">Hubungi admin dengan membawa nomor order transaksi ini.</p>
+                  <p className="text-foreground font-semibold">Sudah transfer tapi belum terverifikasi?</p>
+                  <p className="text-muted-foreground mt-0.5 mb-2">Hubungi admin dengan membawa nomor transaksi ini.</p>
                   <a
                     href={contactLink.url}
                     target="_blank"

@@ -35,6 +35,12 @@ interface PaymentData {
   qris_url: string;
   payment_url?: string;
   totalAmount: number;
+  originalAmount?: number;
+  gateway?: string;
+  isPoketo?: boolean;
+  slug?: string;
+  vaBanks?: Array<{ code: string; name: string }>;
+  quotes?: any;
   expiresAt: string;
   productId?: string;
 }
@@ -419,8 +425,8 @@ const Index = () => {
       calculatedAmount = discountedAmount && discountedAmount > 0 ? discountedAmount : fullAmount;
     }
 
-    if (calculatedAmount < 10000) {
-      setErrorMsg("Nominal pemesanan minimal Rp 10.000 untuk checkout Payment Gateway Poketo (QRIS, VA Bank, PayLater, Kartu Debit). Silakan pilih minimal 5 Hari untuk Normal atau 4 Hari untuk VIP.");
+    if (calculatedAmount < 1000) {
+      setErrorMsg("Nominal pemesanan minimal Rp 1.000.");
       setLoading(false);
       return;
     }
@@ -507,6 +513,12 @@ const Index = () => {
         qris_url: data.qris_url,
         payment_url: data.payment_url,
         totalAmount: data.totalAmount,
+        originalAmount: data.originalAmount || amount,
+        gateway: data.gateway,
+        isPoketo: data.isPoketo,
+        slug: data.slug,
+        vaBanks: data.vaBanks,
+        quotes: data.quotes,
         expiresAt: data.expiresAt
       };
 

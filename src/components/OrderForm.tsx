@@ -384,19 +384,26 @@ const OrderForm: FC<OrderFormProps> = ({
           <div>
             <div className="flex items-center justify-between mb-2">
               <label className="block text-sm font-medium text-foreground">Durasi</label>
-              <span className="text-[11px] text-primary font-medium">Min. Rp 10.000 untuk Poketo Gateway</span>
+              <span className="text-[11px] text-muted-foreground font-mono">Bebas pilih durasi</span>
             </div>
             <div className="flex gap-2 mb-2 flex-wrap">
-              <Button type="button" variant={formData.duration === (selectedPkg === 'VIP' ? '4h' : '5h') ? 'default' : 'outline'} size="sm" onClick={() => setFormData({ ...formData, duration: selectedPkg === 'VIP' ? '4h' : '5h' })} className="flex-1 text-xs">
-                {selectedPkg === 'VIP' ? '4 Hari' : '5 Hari'}
-              </Button>
+              <Button type="button" variant={formData.duration === '1h' ? 'default' : 'outline'} size="sm" onClick={() => setFormData({ ...formData, duration: '1h' })} className="flex-1 text-xs">1 Hari</Button>
+              <Button type="button" variant={formData.duration === '3h' ? 'default' : 'outline'} size="sm" onClick={() => setFormData({ ...formData, duration: '3h' })} className="flex-1 text-xs">3 Hari</Button>
               <Button type="button" variant={formData.duration === '7h' ? 'default' : 'outline'} size="sm" onClick={() => setFormData({ ...formData, duration: '7h' })} className="flex-1 text-xs">7 Hari</Button>
-              <Button type="button" variant={formData.duration === '14h' ? 'default' : 'outline'} size="sm" onClick={() => setFormData({ ...formData, duration: '14h' })} className="flex-1 text-xs">14 Hari</Button>
               <Button type="button" variant={formData.duration === '1b' ? 'default' : 'outline'} size="sm" onClick={() => setFormData({ ...formData, duration: '1b' })} className="flex-1 text-xs">1 Bulan</Button>
               <Button type="button" variant={formData.duration === '1t' ? 'default' : 'outline'} size="sm" onClick={() => setFormData({ ...formData, duration: '1t' })} className="flex-1 text-xs">1 Tahun</Button>
             </div>
-            <Input type="text" value={formData.duration} onChange={(e) => setFormData({ ...formData, duration: e.target.value })} placeholder="Atau ketik manual: 5h, 7h, 14h, 1b, 1t" className="bg-muted/50 border-border focus:border-primary" />
-            <p className="text-xs text-muted-foreground mt-2">Format: angka + h (hari), b (bulan), t (tahun). Contoh: 5h, 7h, 30h, 1b, 1t</p>
+            <Input type="text" value={formData.duration} onChange={(e) => setFormData({ ...formData, duration: e.target.value })} placeholder="Atau ketik manual: 1h, 3h, 7h, 1b, 1t" className="bg-muted/50 border-border focus:border-primary" />
+            <div className="mt-2 text-[11px] space-y-1 bg-muted/40 p-2.5 rounded-lg border border-border/60">
+              <p className="text-muted-foreground flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-cyan-400"></span>
+                <span>Tagihan &lt; Rp 10.000: Gateway <strong>ArexansPay &amp; XMPayment</strong> (QRIS Instan)</span>
+              </p>
+              <p className="text-muted-foreground flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                <span>Tagihan &ge; Rp 10.000: Gateway <strong>Poketo.id</strong> (QRIS, VA Bank, PayLater, Kartu Debit)</span>
+              </p>
+            </div>
           </div>
           )}
 
