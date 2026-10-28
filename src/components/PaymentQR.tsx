@@ -1,6 +1,6 @@
 import { FC, useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
-import { Copy, MessageCircle, AlertCircle, RefreshCw } from 'lucide-react';
+import { Copy, MessageCircle, AlertCircle, RefreshCw, ExternalLink } from 'lucide-react';
 import GlobalBackground from './GlobalBackground';
 import { supabase } from '@/integrations/supabase/client';
 
@@ -19,6 +19,7 @@ interface PaymentQRProps {
     transactionId: string;
     qr_string: string;
     qris_url: string;
+    payment_url?: string;
     totalAmount: number;
     expiresAt: string;
   };
@@ -113,6 +114,23 @@ const PaymentQR: FC<PaymentQRProps> = ({
         {errorMsg && (
           <div className="bg-destructive/10 border border-destructive/50 text-destructive p-4 rounded-xl mb-6 text-sm">
             {errorMsg}
+          </div>
+        )}
+
+        {paymentData.payment_url && (
+          <div className="mb-4">
+            <a
+              href={paymentData.payment_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center justify-center gap-2 w-full py-3 px-4 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white font-bold text-sm shadow-lg shadow-emerald-500/25 transition-all scale-[1.01]"
+            >
+              <span>Bayar via Poketo (QRIS / VA / E-Wallet)</span>
+              <ExternalLink className="w-4 h-4" />
+            </a>
+            <p className="text-[11px] text-muted-foreground mt-1.5 text-center">
+              Klik tombol di atas untuk pembayaran langsung atau scan QR di bawah ini
+            </p>
           </div>
         )}
 

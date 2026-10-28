@@ -58,6 +58,16 @@ export const PaymentGatewaySettings: FC<PaymentGatewaySettingsProps> = ({ onSett
     error?: string;
   } | null>(null);
 
+  // Poketo Test Status (https://poketo.id/docs)
+  const [poketoTesting, setPoketoTesting] = useState(false);
+  const [poketoStatus, setPoketoStatus] = useState<{
+    tested: boolean;
+    valid: boolean;
+    merchantName?: string;
+    message?: string;
+    error?: string;
+  } | null>(null);
+
   // Discord Test Status
   const [discordTesting, setDiscordTesting] = useState(false);
 
@@ -317,6 +327,51 @@ export const PaymentGatewaySettings: FC<PaymentGatewaySettingsProps> = ({ onSett
     }
   };
 
+  // Test Poketo API Key (https://poketo.id/docs)
+  const testPoketoConnection = async () => {
+    const apiKey = getValue('poketo_api_key', 'sk_live_iZEBli3dV1buw_sFB4DhUfIDVKGp-itZ');
+    if (!apiKey) {
+      toast({
+        title: 'API Key Poketo Kosong',
+        description: 'Silakan isi API Key Poketo terlebih dahulu.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setPoketoTesting(true);
+    setPoketoStatus(null);
+    try {
+      const { data, error } = await supabase.functions.invoke('test-poketo', {
+        body: { api_key: apiKey },
+      });
+
+      if (error) throw error;
+
+      if (data?.success) {
+        setPoketoStatus({
+          tested: true,
+          valid: true,
+          merchantName: data.merchant?.name || 'Poketo Merchant',
+          message: data.message || `Terhubung ke Poketo (${data.merchant?.name || 'Live'})`,
+        });
+        toast({
+          title: 'Koneksi Poketo Berhasil',
+          description: data.message || 'API Key Poketo terverifikasi aktif!',
+        });
+      } else {
+        const errMsg = data?.error || 'Gagal memverifikasi API Key Poketo.';
+        setPoketoStatus({ tested: true, valid: false, error: errMsg });
+        toast({ title: 'Koneksi Poketo Gagal', description: errMsg, variant: 'destructive' });
+      }
+    } catch (err: any) {
+      setPoketoStatus({ tested: true, valid: false, error: err?.message || 'Gagal menghubungi server Poketo' });
+      toast({ title: 'Error Poketo', description: err?.message || 'Gagal menghubungi server Poketo', variant: 'destructive' });
+    } finally {
+      setPoketoTesting(false);
+    }
+  };
+
   // Test Discord Webhook
   const testDiscordWebhook = async () => {
     const webhookUrl = getValue('discord_webhook_url');
@@ -366,9 +421,12 @@ export const PaymentGatewaySettings: FC<PaymentGatewaySettingsProps> = ({ onSett
   const webhookUrl = `${currentOrigin}/functions/v1/payment-webhook`;
 
   // Resolved values
-  const rawGateway = getValue('payment_gateway', 'xmpayment');
+  const rawGateway = getValue('payment_gateway', 'poketo');
   const currentGateway = (rawGateway === 'casaku' || rawGateway === 'cashify') ? 'arexanspay' : (rawGateway === 'pakasir' ? 'xmpayment' : rawGateway);
   const isSimulationOn = getValue('payment_simulation') === 'on';
+
+  const poketoApiKey = getValue('poketo_api_key', 'sk_live_iZEBli3dV1buw_sFB4DhUfIDVKGp-itZ');
+  const poketoWebhookKey = getValue('poketo_webhook_key', 'whsec_b71_8KfymmRPeNNQP2wigV2jshWTrC-X');
 
   const arexanspayLicense = getValue('arexanspay_api_key') || getValue('casaku_license_key');
   const arexanspayQris = getValue('arexanspay_qris_id') || getValue('casaku_qris_id');
@@ -402,18 +460,20 @@ export const PaymentGatewaySettings: FC<PaymentGatewaySettingsProps> = ({ onSett
                 Mode & Gateway Aktif
               </CardTitle>
               <CardDescription className="text-xs">
-                Pilih payment gateway utama untuk melayani pembayaran QRIS otomatis.
+                Pilih payment gateway utama untuk melayani pembayaran QRIS & Invoice otomatis.
               </CardDescription>
             </div>
             <div className="flex items-center gap-2">
               <span className={`text-xs px-2.5 py-1 rounded-full font-semibold ${
-                currentGateway === 'both' 
+                currentGateway === 'poketo'
+                  ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                  : currentGateway === 'both' 
                   ? 'bg-purple-500/15 text-purple-400 border border-purple-500/30'
                   : currentGateway === 'arexanspay'
                   ? 'bg-cyan-500/15 text-cyan-400 border border-cyan-500/30'
                   : 'bg-indigo-500/15 text-indigo-400 border border-indigo-500/30'
               }`}>
-                {currentGateway === 'xmpayment' ? 'XMPayment Aktif' : currentGateway === 'arexanspay' ? 'ArexansPay Aktif' : 'Dual Gateway Aktif'}
+                {currentGateway === 'poketo' ? 'Poketo.id Aktif (Rekomendasi)' : currentGateway === 'xmpayment' ? 'XMPayment Aktif' : currentGateway === 'arexanspay' ? 'ArexansPay Aktif' : 'Dual Gateway Aktif'}
               </span>
             </div>
           </div>
@@ -424,7 +484,33 @@ export const PaymentGatewaySettings: FC<PaymentGatewaySettingsProps> = ({ onSett
             <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2 block">
               Pilihan Gateway Pembayaran
             </Label>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              <button
+                type="button"
+                onClick={() => saveSetting('payment_gateway', 'poketo')}
+                className={`p-4 rounded-xl border text-left transition-all duration-200 flex flex-col justify-between relative ${
+                  currentGateway === 'poketo'
+                    ? 'border-emerald-500 bg-emerald-500/10 text-foreground ring-1 ring-emerald-500 shadow-md'
+                    : 'border-border/60 bg-muted/30 hover:border-emerald-500/40 text-muted-foreground'
+                }`}
+              >
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="font-bold text-sm text-foreground flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                      Poketo.id (Utama)
+                    </span>
+                    <Radio className={`w-4 h-4 ${currentGateway === 'poketo' ? 'text-emerald-400' : 'text-muted-foreground/40'}`} />
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    QRIS Otomatis, VA & E-Wallet via invoice pay.poketo.id.
+                  </p>
+                </div>
+                <div className="mt-3 flex items-center gap-1.5 text-[11px] text-emerald-400">
+                  <ExternalLink className="w-3 h-3" /> https://poketo.id/docs
+                </div>
+              </button>
+
               <button
                 type="button"
                 onClick={() => saveSetting('payment_gateway', 'xmpayment')}
@@ -436,7 +522,7 @@ export const PaymentGatewaySettings: FC<PaymentGatewaySettingsProps> = ({ onSett
               >
                 <div>
                   <div className="flex items-center justify-between mb-1">
-                    <span className="font-bold text-sm text-foreground">XMPayment (Utama)</span>
+                    <span className="font-bold text-sm text-foreground">XMPayment</span>
                     <Radio className={`w-4 h-4 ${currentGateway === 'xmpayment' ? 'text-indigo-400' : 'text-muted-foreground/40'}`} />
                   </div>
                   <p className="text-xs text-muted-foreground">
@@ -525,7 +611,172 @@ export const PaymentGatewaySettings: FC<PaymentGatewaySettingsProps> = ({ onSett
         </CardContent>
       </Card>
 
-      {/* 2. ArexansPay Integration Card (https://www.arexanspay.my.id/docs) */}
+      {/* 2. Poketo.id Integration Card (https://poketo.id/docs) */}
+      <Card className="glass-card border-emerald-500/20 bg-background/60 shadow-lg relative overflow-hidden">
+        <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-emerald-500 via-teal-400 to-green-500" />
+        <CardHeader className="pb-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <div className="flex items-center gap-2">
+                <CardTitle className="text-lg font-display font-bold text-foreground flex items-center gap-2">
+                  <Coins className="w-5 h-5 text-emerald-400" />
+                  Integrasi Poketo.id (Payment Gateway)
+                </CardTitle>
+                <a
+                  href="https://poketo.id/docs"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-xs text-emerald-400 hover:underline flex items-center gap-1 bg-emerald-500/10 px-2 py-0.5 rounded-full"
+                >
+                  <span>Docs</span>
+                  <ExternalLink className="w-3 h-3" />
+                </a>
+              </div>
+              <CardDescription className="text-xs mt-1">
+                Kredensial dari dashboard https://poketo.id untuk checkout invoice, QRIS instan, Virtual Account, dan E-Wallet.
+              </CardDescription>
+            </div>
+
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={testPoketoConnection}
+              disabled={poketoTesting}
+              className="border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/10 shrink-0 gap-1.5"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${poketoTesting ? 'animate-spin' : ''}`} />
+              {poketoTesting ? 'Memverifikasi...' : 'Test Koneksi Poketo'}
+            </Button>
+          </div>
+
+          {/* Poketo Test Status Banner */}
+          {poketoStatus && (
+            <div className={`mt-3 p-3 rounded-lg text-xs flex items-center gap-2 ${
+              poketoStatus.valid 
+                ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' 
+                : 'bg-destructive/10 text-destructive border border-destructive/30'
+            }`}>
+              {poketoStatus.valid ? (
+                <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400" />
+              ) : (
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+              )}
+              <span>{poketoStatus.valid ? `${poketoStatus.message}` : `Error: ${poketoStatus.error}`}</span>
+            </div>
+          )}
+        </CardHeader>
+
+        <CardContent className="space-y-4">
+          {/* Poketo API Key */}
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <Label htmlFor="poketo_api_key" className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                <Shield className="w-3.5 h-3.5 text-emerald-400" />
+                Poketo API Key (Secret Key) <span className="text-destructive">*</span>
+              </Label>
+              <button
+                type="button"
+                onClick={() => setShowSecrets(p => ({ ...p, poketo_key: !p.poketo_key }))}
+                className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
+              >
+                {showSecrets.poketo_key ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                {showSecrets.poketo_key ? 'Sembunyikan' : 'Tampilkan'}
+              </button>
+            </div>
+            <div className="flex gap-2">
+              <Input
+                id="poketo_api_key"
+                type={showSecrets.poketo_key ? 'text' : 'password'}
+                value={poketoApiKey}
+                onChange={(e) => handleInputChange('poketo_api_key', e.target.value)}
+                placeholder="sk_live_..."
+                className="bg-muted/40 font-mono text-xs focus:border-emerald-500"
+              />
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => saveSetting('poketo_api_key', poketoApiKey)}
+                disabled={savingKey === 'poketo_api_key'}
+                className="bg-emerald-600 hover:bg-emerald-500 text-white shrink-0 gap-1"
+              >
+                <Save className="w-3.5 h-3.5" /> Simpan
+              </Button>
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              API Secret Key dari menu API Keys di dashboard Poketo (contoh: <code>sk_live_...</code>).
+            </p>
+          </div>
+
+          {/* Poketo Webhook Key */}
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <Label htmlFor="poketo_webhook_key" className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                <Shield className="w-3.5 h-3.5 text-emerald-400" />
+                Poketo Webhook Secret Key <span className="text-destructive">*</span>
+              </Label>
+              <button
+                type="button"
+                onClick={() => setShowSecrets(p => ({ ...p, poketo_whsec: !p.poketo_whsec }))}
+                className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
+              >
+                {showSecrets.poketo_whsec ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                {showSecrets.poketo_whsec ? 'Sembunyikan' : 'Tampilkan'}
+              </button>
+            </div>
+            <div className="flex gap-2">
+              <Input
+                id="poketo_webhook_key"
+                type={showSecrets.poketo_whsec ? 'text' : 'password'}
+                value={poketoWebhookKey}
+                onChange={(e) => handleInputChange('poketo_webhook_key', e.target.value)}
+                placeholder="whsec_..."
+                className="bg-muted/40 font-mono text-xs focus:border-emerald-500"
+              />
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => saveSetting('poketo_webhook_key', poketoWebhookKey)}
+                disabled={savingKey === 'poketo_webhook_key'}
+                className="bg-emerald-600 hover:bg-emerald-500 text-white shrink-0 gap-1"
+              >
+                <Save className="w-3.5 h-3.5" /> Simpan
+              </Button>
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              Webhook Secret (contoh: <code>whsec_...</code>) digunakan backend untuk memvalidasi header <code>poketo-signature</code>.
+            </p>
+          </div>
+
+          {/* Webhook URL Helper */}
+          <div className="p-3 rounded-lg bg-emerald-500/5 border border-emerald-500/20">
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-xs font-semibold text-emerald-400 flex items-center gap-1">
+                <ExternalLink className="w-3.5 h-3.5" />
+                URL Webhook untuk Dashboard Poketo.id
+              </span>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => copyToClipboard(webhookUrl, 'poketo_webhook')}
+                className="h-7 px-2 text-xs text-emerald-400 hover:bg-emerald-500/10 gap-1"
+              >
+                {copiedKey === 'poketo_webhook' ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                {copiedKey === 'poketo_webhook' ? 'Tersalin' : 'Salin URL'}
+              </Button>
+            </div>
+            <div className="p-2 rounded bg-background/80 font-mono text-[11px] text-foreground break-all border border-emerald-500/20">
+              {webhookUrl}
+            </div>
+            <p className="text-[10px] text-muted-foreground mt-1.5">
+              Salin URL ini ke <strong>Dashboard Poketo &gt; Webhooks</strong>. Centang event <code>invoice.paid</code>. License key akan terbit otomatis seketika pelanggan melunasi pembayaran.
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* 3. ArexansPay Integration Card (https://www.arexanspay.my.id/docs) */}
       <Card className="glass-card border-cyan-500/20 bg-background/60 shadow-lg relative overflow-hidden">
         <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-cyan-500 via-sky-400 to-blue-500" />
         <CardHeader className="pb-4">

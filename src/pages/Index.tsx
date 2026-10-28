@@ -33,6 +33,7 @@ interface PaymentData {
   transactionId: string;
   qr_string: string;
   qris_url: string;
+  payment_url?: string;
   totalAmount: number;
   expiresAt: string;
   productId?: string;
@@ -483,6 +484,7 @@ const Index = () => {
         transactionId: data.transactionId,
         qr_string: data.qr_string,
         qris_url: data.qris_url,
+        payment_url: data.payment_url,
         totalAmount: data.totalAmount,
         expiresAt: data.expiresAt
       };
@@ -559,18 +561,32 @@ const Index = () => {
             <p className="text-sm text-muted-foreground text-center">Total: <span className="text-primary font-bold">{formatRupiah(pendingPayment.amount)}</span></p>
             <div className="grid gap-3">
               <button
+                onClick={async () => { const p = pendingPayment; setPendingPayment(null); await createPayment(p.amount, p.days, p.promoCode, 'poketo'); }}
+                className="w-full p-3 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/50 text-emerald-300 text-left transition shadow-md shadow-emerald-500/10"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold">Poketo (Otomatis)</span>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 font-mono">
+                    QRIS • E-Wallet • VA
+                  </span>
+                </div>
+                <p className="text-xs opacity-80 mt-1">Pembayaran otomatis & instan realtime</p>
+              </button>
+
+              <button
                 disabled={!developerOnline}
                 onClick={async () => { const p = pendingPayment; setPendingPayment(null); await createPayment(p.amount, p.days, p.promoCode, 'arexanspay'); }}
                 className={`w-full p-3 rounded-xl border text-left transition ${developerOnline ? 'bg-primary/20 hover:bg-primary/30 border-primary/50 text-primary' : 'bg-muted/20 border-border text-muted-foreground cursor-not-allowed opacity-60'}`}
               >
                 <div className="flex items-center justify-between">
-                  <span className="font-semibold">Qris 1</span>
+                  <span className="font-semibold">Qris 1 (ArexansPay)</span>
                   <span className={`text-[10px] px-2 py-0.5 rounded-full ${developerOnline ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40' : 'bg-red-500/20 text-red-400 border border-red-500/40'}`}>
                     {developerOnline ? 'Online' : 'Offline'}
                   </span>
                 </div>
                 <p className="text-xs opacity-80 mt-1">Tidak ada pajak</p>
               </button>
+
               <button
                 onClick={async () => { const p = pendingPayment; setPendingPayment(null); await createPayment(p.amount, p.days, p.promoCode, 'xmpayment'); }}
                 className="w-full p-3 rounded-xl bg-secondary/20 hover:bg-secondary/30 border border-secondary/50 text-secondary text-left transition"

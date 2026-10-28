@@ -385,7 +385,7 @@ export async function handleFunctionsRequest(req: any, res: any): Promise<boolea
   const urlStr = req.url || '';
   const pathname = urlStr.split('?')[0] || '';
 
-  const match = pathname.match(/^\/functions\/v1\/([a-zA-Z0-9_\-]+)/);
+  const match = pathname.match(/^\/(?:functions\/v1|api)\/([a-zA-Z0-9_\-]+)/);
   if (!match) return false;
 
   const funcName = match[1];
@@ -473,6 +473,53 @@ export async function handleFunctionsRequest(req: any, res: any): Promise<boolea
   try {
     const body = JSON.parse(bodyStr || '{}');
 
+      async function fulfillTransaction(tx: any) {
+        if (!tx) return;
+        await pool.query("UPDATE transactions SET status = 'claimed', paid_at = now() WHERE id = $1 OR transaction_id = $1", [tx.id || tx.transaction_id]);
+
+        if (tx.license_key && tx.package_name !== 'XCOINS_TOPUP') {
+          try {
+            const keysRes = await pool.query("SELECT value FROM app_settings WHERE key = 'license_keys' LIMIT 1");
+            let allKeys: any[] = [];
+            if (keysRes.rows[0]?.value) {
+              try { allKeys = JSON.parse(keysRes.rows[0].value); } catch {}
+            }
+
+            const cleanKey = tx.license_key.trim().toUpperCase();
+            const existingIdx = allKeys.findIndex((k: any) => (k.key || '').toUpperCase() === cleanKey);
+            const days = tx.package_duration || 30;
+            const isLifetime = days >= 9999;
+            const expireDate = new Date();
+            expireDate.setDate(expireDate.getDate() + days);
+
+            if (existingIdx !== -1) {
+              allKeys[existingIdx].expired = expireDate.toISOString();
+              allKeys[existingIdx].isLifetime = isLifetime;
+              allKeys[existingIdx].role = tx.package_name;
+            } else {
+              allKeys.push({
+                key: cleanKey,
+                role: tx.package_name,
+                created: new Date().toISOString(),
+                expired: expireDate.toISOString(),
+                isLifetime,
+                maxHwid: 1,
+                hwids: [],
+                devices: [],
+                transactionId: tx.transaction_id,
+              });
+            }
+
+            await pool.query(
+              "UPDATE app_settings SET value = $1, updated_at = now() WHERE key = 'license_keys'",
+              [JSON.stringify(allKeys)]
+            );
+          } catch (kErr) {
+            console.warn('Auto key create error:', kErr);
+          }
+        }
+      }
+
       if (funcName === 'create-payment') {
         const {
           amount,
@@ -482,40 +529,92 @@ export async function handleFunctionsRequest(req: any, res: any): Promise<boolea
           licenseKey: customerLicenseKey,
           customerWhatsapp,
           deviceId,
+          gateway,
         } = body;
 
         const orderId = `TRX-${Date.now()}-${Math.random().toString(36).substr(2, 9).toUpperCase()}`;
-        const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+        let expiresAt = new Date(Date.now() + 15 * 60 * 1000);
         let qrString = '';
         let qrisUrl = '';
+        let paymentUrl = '';
         let totalAmount = amount;
 
-        // Call XMPayment API
-        try {
-          const cleanCustName = customerName || customerLicenseKey || 'Customer';
-          const xmpResp = await fetch('https://xmpayment.my.id/api/v1/create', {
-            method: 'POST',
-            headers: {
-              'Authorization': 'Bearer xmp_live_8YN23PFQXc31HocRExuMHSFgTAnAEaj2',
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              order_id: orderId,
-              amount: amount,
-              customer_name: cleanCustName,
-              customer_email: 'buyer@arexans.my.id',
-              redirect_url: 'https://tools.arexans.my.id',
-            }),
-          });
+        // Query settings for gateway preference and keys
+        const settingsRes = await pool.query(
+          "SELECT key, value FROM app_settings WHERE key IN ('payment_gateway', 'poketo_api_key', 'poketo_webhook_key')"
+        );
+        const settingsMap: Record<string, string> = {};
+        (settingsRes.rows || []).forEach((r: any) => { settingsMap[r.key] = r.value; });
 
-          const xmpData = await xmpResp.json();
-          if (xmpData && xmpData.data) {
-            qrString = xmpData.data.qr_string || '';
-            totalAmount = xmpData.data.total_amount || amount;
-            qrisUrl = xmpData.data.checkout_url || xmpData.data.qr_code_url || `https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=${encodeURIComponent(qrString)}`;
+        const activeGateway = gateway || settingsMap.payment_gateway || 'poketo';
+        const poketoKey = settingsMap.poketo_api_key || 'sk_live_iZEBli3dV1buw_sFB4DhUfIDVKGp-itZ';
+        const cleanCustName = customerName || customerLicenseKey || 'Pelanggan Arexans';
+
+        // 1. Try Poketo
+        if (activeGateway === 'poketo' || activeGateway === 'both') {
+          try {
+            const poketoResp = await fetch('https://poketo.id/api/v1/invoices', {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${poketoKey}`,
+                'Content-Type': 'application/json',
+                'Idempotency-Key': orderId,
+              },
+              body: JSON.stringify({
+                amount: Math.round(Number(amount)),
+                title: `Arexans - ${packageName || 'Tools'} (${packageDuration || 1} Hari)`,
+                referenceId: orderId,
+                customer: {
+                  name: cleanCustName,
+                  email: 'customer@arexans.my.id',
+                  phone: customerWhatsapp || null,
+                },
+              }),
+            });
+
+            const poketoData = await poketoResp.json();
+            if (poketoData?.data) {
+              const inv = poketoData.data;
+              paymentUrl = inv.paymentUrl || `https://pay.poketo.id/inv/${inv.id}`;
+              totalAmount = inv.totalAmount || amount;
+              qrString = paymentUrl;
+              qrisUrl = `https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=${encodeURIComponent(paymentUrl)}`;
+              if (inv.expiresAt) {
+                expiresAt = new Date(inv.expiresAt);
+              }
+            }
+          } catch (pErr) {
+            console.warn('Poketo create invoice error, fallback:', pErr);
           }
-        } catch (xmpErr) {
-          console.warn('XMPayment create error, fallback:', xmpErr);
+        }
+
+        // 2. Fallback to XMPayment if no paymentUrl yet
+        if (!qrString && (activeGateway === 'xmpayment' || activeGateway === 'both' || !paymentUrl)) {
+          try {
+            const xmpResp = await fetch('https://xmpayment.my.id/api/v1/create', {
+              method: 'POST',
+              headers: {
+                'Authorization': 'Bearer xmp_live_8YN23PFQXc31HocRExuMHSFgTAnAEaj2',
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                order_id: orderId,
+                amount: amount,
+                customer_name: cleanCustName,
+                customer_email: 'buyer@arexans.my.id',
+                redirect_url: 'https://tools.arexans.my.id',
+              }),
+            });
+
+            const xmpData = await xmpResp.json();
+            if (xmpData && xmpData.data) {
+              qrString = xmpData.data.qr_string || '';
+              totalAmount = xmpData.data.total_amount || amount;
+              qrisUrl = xmpData.data.checkout_url || xmpData.data.qr_code_url || `https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=${encodeURIComponent(qrString)}`;
+            }
+          } catch (xmpErr) {
+            console.warn('XMPayment create error, fallback:', xmpErr);
+          }
         }
 
         if (!qrString) {
@@ -536,6 +635,19 @@ export async function handleFunctionsRequest(req: any, res: any): Promise<boolea
           ]
         );
 
+        if (body.is_simulation || body.isSimulation) {
+          setTimeout(async () => {
+            try {
+              const tx = await pool.query('SELECT * FROM transactions WHERE transaction_id = $1 LIMIT 1', [orderId]);
+              if (tx.rows[0] && tx.rows[0].status === 'pending') {
+                await fulfillTransaction(tx.rows[0]);
+              }
+            } catch (err) {
+              console.warn('Simulation fulfill error:', err);
+            }
+          }, 6000);
+        }
+
         res.statusCode = 200;
         res.setHeader('Content-Type', 'application/json');
         return res.end(JSON.stringify({
@@ -543,6 +655,7 @@ export async function handleFunctionsRequest(req: any, res: any): Promise<boolea
           transactionId: orderId,
           qr_string: qrString,
           qris_url: qrisUrl,
+          payment_url: paymentUrl || undefined,
           totalAmount,
           expiresAt: expiresAt.toISOString(),
         }));
@@ -556,7 +669,7 @@ export async function handleFunctionsRequest(req: any, res: any): Promise<boolea
           return res.end(JSON.stringify({ error: 'Transaction ID required' }));
         }
 
-        const txRes = await pool.query('SELECT * FROM transactions WHERE transaction_id = $1 LIMIT 1', [transactionId]);
+        const txRes = await pool.query('SELECT * FROM transactions WHERE transaction_id = $1 OR id = $1 LIMIT 1', [transactionId]);
         const transaction = txRes.rows[0];
         if (!transaction) {
           res.statusCode = 404;
@@ -572,21 +685,62 @@ export async function handleFunctionsRequest(req: any, res: any): Promise<boolea
         let isPaid = false;
         let cancelled = false;
 
-        // Check XMPayment
+        // 1. Check Poketo
         try {
-          const xmpResp = await fetch(`https://xmpayment.my.id/api/v1/status/${transactionId}`, {
-            headers: { 'Authorization': 'Bearer xmp_live_8YN23PFQXc31HocRExuMHSFgTAnAEaj2' },
+          const settingsRes = await pool.query("SELECT value FROM app_settings WHERE key = 'poketo_api_key' LIMIT 1");
+          const poketoKey = settingsRes.rows[0]?.value || 'sk_live_iZEBli3dV1buw_sFB4DhUfIDVKGp-itZ';
+          let inv: any = null;
+
+          // Try direct invoice ID check
+          const poketoResp = await fetch(`https://poketo.id/api/v1/invoices/${encodeURIComponent(transactionId)}`, {
+            headers: { 'Authorization': `Bearer ${poketoKey}` },
           });
-          const xmpData = await xmpResp.json();
-          if (xmpData && xmpData.data) {
-            if (xmpData.data.is_paid || xmpData.data.status === 'SETTLED' || xmpData.data.status === 'SUCCESS') {
+          if (poketoResp.ok) {
+            const poketoData = await poketoResp.json();
+            inv = poketoData?.data;
+          }
+
+          // If not found directly, query recent invoices by referenceId
+          if (!inv) {
+            const listResp = await fetch(`https://poketo.id/api/v1/invoices?limit=25`, {
+              headers: { 'Authorization': `Bearer ${poketoKey}` },
+            });
+            if (listResp.ok) {
+              const listData = await listResp.json();
+              inv = (listData?.data || []).find((item: any) =>
+                item.referenceId === transactionId || item.id === transactionId
+              );
+            }
+          }
+
+          if (inv) {
+            if (inv.status === 'paid' || inv.status === 'settled') {
               isPaid = true;
-            } else if (xmpData.data.status === 'CANCELLED') {
+            } else if (inv.status === 'cancelled' || inv.status === 'expired') {
               cancelled = true;
             }
           }
         } catch (e) {
-          console.warn('XMPayment status check error:', e);
+          console.warn('Poketo status check error:', e);
+        }
+
+        // 2. Check XMPayment
+        if (!isPaid && !cancelled) {
+          try {
+            const xmpResp = await fetch(`https://xmpayment.my.id/api/v1/status/${transactionId}`, {
+              headers: { 'Authorization': 'Bearer xmp_live_8YN23PFQXc31HocRExuMHSFgTAnAEaj2' },
+            });
+            const xmpData = await xmpResp.json();
+            if (xmpData && xmpData.data) {
+              if (xmpData.data.is_paid || xmpData.data.status === 'SETTLED' || xmpData.data.status === 'SUCCESS') {
+                isPaid = true;
+              } else if (xmpData.data.status === 'CANCELLED') {
+                cancelled = true;
+              }
+            }
+          } catch (e) {
+            console.warn('XMPayment status check error:', e);
+          }
         }
 
         if (cancelled) {
@@ -596,53 +750,9 @@ export async function handleFunctionsRequest(req: any, res: any): Promise<boolea
         }
 
         if (isPaid) {
-          await pool.query("UPDATE transactions SET status = 'claimed', paid_at = now() WHERE transaction_id = $1", [transactionId]);
+          await fulfillTransaction(transaction);
           transaction.status = 'claimed';
           transaction.paid_at = new Date().toISOString();
-
-          // Auto-generate key in app_settings if key provided
-          if (transaction.license_key && transaction.package_name !== 'XCOINS_TOPUP') {
-            try {
-              const keysRes = await pool.query("SELECT value FROM app_settings WHERE key = 'license_keys' LIMIT 1");
-              let allKeys: any[] = [];
-              if (keysRes.rows[0]?.value) {
-                try { allKeys = JSON.parse(keysRes.rows[0].value); } catch {}
-              }
-
-              const cleanKey = transaction.license_key.trim().toUpperCase();
-              const existingIdx = allKeys.findIndex((k: any) => (k.key || '').toUpperCase() === cleanKey);
-
-              const days = transaction.package_duration || 30;
-              const isLifetime = days >= 9999;
-              const expireDate = new Date();
-              expireDate.setDate(expireDate.getDate() + days);
-
-              if (existingIdx !== -1) {
-                allKeys[existingIdx].expired = expireDate.toISOString();
-                allKeys[existingIdx].isLifetime = isLifetime;
-                allKeys[existingIdx].role = transaction.package_name;
-              } else {
-                allKeys.push({
-                  key: cleanKey,
-                  role: transaction.package_name,
-                  created: new Date().toISOString(),
-                  expired: expireDate.toISOString(),
-                  isLifetime,
-                  maxHwid: 1,
-                  hwids: [],
-                  devices: [],
-                  transactionId: transactionId,
-                });
-              }
-
-              await pool.query(
-                "UPDATE app_settings SET value = $1, updated_at = now() WHERE key = 'license_keys'",
-                [JSON.stringify(allKeys)]
-              );
-            } catch (kErr) {
-              console.warn('Auto key create error in Cloud SQL:', kErr);
-            }
-          }
 
           res.setHeader('Content-Type', 'application/json');
           return res.end(JSON.stringify({ success: true, paid: true, transaction }));
@@ -650,6 +760,54 @@ export async function handleFunctionsRequest(req: any, res: any): Promise<boolea
 
         res.setHeader('Content-Type', 'application/json');
         return res.end(JSON.stringify({ success: true, paid: false, transaction }));
+      }
+
+      if (funcName === 'payment-webhook') {
+        const refId = body?.data?.referenceId || body?.data?.id || body?.referenceId || body?.id || body?.order_id;
+        const isPaidEvent = body?.type === 'invoice.paid' || body?.event === 'invoice.paid' || body?.data?.status === 'paid' || body?.status === 'SETTLED' || body?.status === 'SUCCESS';
+
+        if (refId && isPaidEvent) {
+          const txRes = await pool.query('SELECT * FROM transactions WHERE transaction_id = $1 OR id = $1 LIMIT 1', [refId]);
+          if (txRes.rows[0]) {
+            await fulfillTransaction(txRes.rows[0]);
+          }
+        }
+
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        return res.end(JSON.stringify({ success: true, message: 'Webhook processed successfully' }));
+      }
+
+      if (funcName === 'test-poketo') {
+        const key = body.apiKey || 'sk_live_iZEBli3dV1buw_sFB4DhUfIDVKGp-itZ';
+        try {
+          const resp = await fetch('https://poketo.id/api/v1/invoices?limit=1', {
+            headers: { 'Authorization': `Bearer ${key}` }
+          });
+          const pData = await resp.json();
+          if (resp.ok) {
+            res.setHeader('Content-Type', 'application/json');
+            return res.end(JSON.stringify({
+              success: true,
+              merchantName: pData?.data?.[0]?.merchantName || 'AREXANS',
+              message: 'Koneksi ke Poketo.id berhasil! API Key Valid & Siap Digunakan.'
+            }));
+          } else {
+            res.statusCode = 400;
+            res.setHeader('Content-Type', 'application/json');
+            return res.end(JSON.stringify({
+              success: false,
+              error: pData.message || 'API Key Poketo tidak valid'
+            }));
+          }
+        } catch (e: any) {
+          res.statusCode = 500;
+          res.setHeader('Content-Type', 'application/json');
+          return res.end(JSON.stringify({
+            success: false,
+            error: e.message || 'Gagal menghubungi server Poketo.id'
+          }));
+        }
       }
 
       if (funcName === 'cancel-payment') {
