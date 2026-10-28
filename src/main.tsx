@@ -3,6 +3,37 @@ import { createRoot } from "react-dom/client";
 import App from "./App.tsx";
 import "./index.css";
 
+// Global top-level safety handler to prevent blank screen if any unhandled error occurs
+if (typeof window !== "undefined") {
+  const mountEmergencyFallback = (msg: string) => {
+    const rootEl = document.getElementById("root");
+    if (rootEl && !rootEl.hasChildNodes()) {
+      rootEl.innerHTML = `
+        <div style="min-height: 100vh; background-color: #020617; color: #f8fafc; display: flex; align-items: center; justify-content: center; padding: 24px; font-family: ui-sans-serif, system-ui, sans-serif;">
+          <div style="max-width: 420px; width: 100%; background: #0f172a; border: 1px solid #1e293b; border-radius: 16px; padding: 24px; text-align: center; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5);">
+            <div style="width: 48px; height: 48px; border-radius: 50%; background: rgba(59, 130, 246, 0.15); border: 1px solid rgba(59, 130, 246, 0.3); color: #60a5fa; margin: 0 auto 16px; display: flex; align-items: center; justify-content: center; font-size: 20px; font-weight: bold;">
+              ⚡
+            </div>
+            <h2 style="font-size: 18px; font-weight: 700; margin: 0 0 8px 0; color: #ffffff;">Arexanstools OFFICIAL</h2>
+            <p style="font-size: 13px; color: #94a3b8; margin: 0 0 20px 0;">Menghubungkan ke server...</p>
+            <button onclick="window.location.reload()" style="width: 100%; padding: 10px 16px; background: #2563eb; color: #ffffff; border: none; border-radius: 10px; font-weight: 600; font-size: 14px; cursor: pointer;">
+              Muat Ulang Halaman
+            </button>
+          </div>
+        </div>
+      `;
+    }
+  };
+
+  window.addEventListener("error", (e) => {
+    console.error("Window uncaught error:", e.error || e.message);
+  });
+
+  window.addEventListener("unhandledrejection", (e) => {
+    console.error("Window unhandled rejection:", e.reason);
+  });
+}
+
 interface ErrorBoundaryProps {
   children: ReactNode;
 }
@@ -27,7 +58,9 @@ class RootErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState
   }
 
   handleReload = () => {
-    localStorage.removeItem("arexans_payment_state");
+    try {
+      localStorage.removeItem("arexans_payment_state");
+    } catch {}
     window.location.reload();
   };
 
@@ -59,9 +92,11 @@ class RootErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState
   }
 }
 
-createRoot(document.getElementById("root")!).render(
-  <RootErrorBoundary>
-    <App />
-  </RootErrorBoundary>
-);
-
+const rootElement = document.getElementById("root");
+if (rootElement) {
+  createRoot(rootElement).render(
+    <RootErrorBoundary>
+      <App />
+    </RootErrorBoundary>
+  );
+}

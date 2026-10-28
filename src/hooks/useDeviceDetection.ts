@@ -45,32 +45,43 @@ const fetchPublicIp = async (): Promise<string> => {
 
 // Generate a unique device fingerprint
 const generateDeviceId = (): string => {
-  const canvas = document.createElement('canvas');
-  const ctx = canvas.getContext('2d');
-  if (ctx) {
-    ctx.textBaseline = 'top';
-    ctx.font = '14px Arial';
-    ctx.fillText('device-fingerprint', 2, 2);
+  try {
+    let canvasData = '';
+    try {
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.textBaseline = 'top';
+        ctx.font = '14px Arial';
+        ctx.fillText('device-fingerprint', 2, 2);
+        canvasData = canvas.toDataURL();
+      }
+    } catch {
+      canvasData = 'canvas_na';
+    }
+    
+    const sw = typeof screen !== 'undefined' ? `${screen.width}x${screen.height}` : '0x0';
+    const fingerprint = [
+      navigator.userAgent || '',
+      navigator.language || '',
+      sw,
+      new Date().getTimezoneOffset(),
+      navigator.platform || '',
+      canvasData
+    ].join('|');
+    
+    // Simple hash function
+    let hash = 0;
+    for (let i = 0; i < fingerprint.length; i++) {
+      const char = fingerprint.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash;
+    }
+    
+    return 'DEV-' + Math.abs(hash).toString(36).toUpperCase();
+  } catch {
+    return 'DEV-' + Math.random().toString(36).slice(2, 8).toUpperCase();
   }
-  
-  const fingerprint = [
-    navigator.userAgent,
-    navigator.language,
-    screen.width + 'x' + screen.height,
-    new Date().getTimezoneOffset(),
-    navigator.platform,
-    canvas.toDataURL()
-  ].join('|');
-  
-  // Simple hash function
-  let hash = 0;
-  for (let i = 0; i < fingerprint.length; i++) {
-    const char = fingerprint.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash = hash & hash;
-  }
-  
-  return 'DEV-' + Math.abs(hash).toString(36).toUpperCase();
 };
 
 // Get device info for display

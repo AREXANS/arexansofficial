@@ -32,18 +32,29 @@ interface ClaimResult {
 }
 
 const getDeviceId = (): string => {
-  let id = localStorage.getItem('arexans_device_id');
-  if (!id) {
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d');
-    if (ctx) { ctx.textBaseline = 'top'; ctx.font = '14px Arial'; ctx.fillText('fp', 2, 2); }
-    const fp = [navigator.userAgent, navigator.language, screen.width + 'x' + screen.height, new Date().getTimezoneOffset(), canvas.toDataURL()].join('|');
-    let hash = 0;
-    for (let i = 0; i < fp.length; i++) { hash = ((hash << 5) - hash) + fp.charCodeAt(i); hash = hash & hash; }
-    id = 'USR-' + Math.abs(hash).toString(36).toUpperCase();
-    localStorage.setItem('arexans_device_id', id);
+  try {
+    let id = typeof window !== 'undefined' ? localStorage.getItem('arexans_device_id') : null;
+    if (!id) {
+      let canvasData = '';
+      try {
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        if (ctx) { ctx.textBaseline = 'top'; ctx.font = '14px Arial'; ctx.fillText('fp', 2, 2); }
+        canvasData = canvas.toDataURL();
+      } catch {
+        canvasData = 'canvas_na';
+      }
+      const sw = typeof screen !== 'undefined' ? `${screen.width}x${screen.height}` : '0x0';
+      const fp = [navigator.userAgent, navigator.language, sw, new Date().getTimezoneOffset(), canvasData].join('|');
+      let hash = 0;
+      for (let i = 0; i < fp.length; i++) { hash = ((hash << 5) - hash) + fp.charCodeAt(i); hash = hash & hash; }
+      id = 'USR-' + Math.abs(hash).toString(36).toUpperCase();
+      try { localStorage.setItem('arexans_device_id', id); } catch {}
+    }
+    return id;
+  } catch {
+    return 'USR-' + Math.random().toString(36).substring(2, 9).toUpperCase();
   }
-  return id;
 };
 
 const censorKey = (key: string) => {

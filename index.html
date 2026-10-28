@@ -12,6 +12,43 @@
     <meta property="og:image" content="https://files.catbox.moe/raona5.jpg" />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:image" content="https://files.catbox.moe/raona5.jpg" />
+    <style>
+      html, body {
+        background-color: #020617;
+        color: #f8fafc;
+        margin: 0;
+        padding: 0;
+        min-height: 100vh;
+      }
+      #root {
+        min-height: 100vh;
+        background-color: #020617;
+      }
+    </style>
+    <script>
+      (function() {
+        // Prevent SecurityError when window.localStorage is blocked in sandboxed / cross-origin iframes
+        try {
+          var test = '__test_st__';
+          window.localStorage.setItem(test, test);
+          window.localStorage.removeItem(test);
+        } catch (e) {
+          var createMockStorage = function() {
+            var s = {};
+            return {
+              getItem: function(k) { return Object.prototype.hasOwnProperty.call(s, k) ? s[k] : null; },
+              setItem: function(k, v) { s[k] = String(v); },
+              removeItem: function(k) { delete s[k]; },
+              clear: function() { s = {}; },
+              get length() { return Object.keys(s).length; },
+              key: function(i) { return Object.keys(s)[i] || null; }
+            };
+          };
+          try { Object.defineProperty(window, 'localStorage', { value: createMockStorage(), configurable: true }); } catch (_) {}
+          try { Object.defineProperty(window, 'sessionStorage', { value: createMockStorage(), configurable: true }); } catch (_) {}
+        }
+      })();
+    </script>
   </head>
   <body class="dark bg-slate-950 text-slate-100 min-h-screen antialiased">
     <div id="root" class="min-h-screen bg-slate-950 text-slate-100"></div>

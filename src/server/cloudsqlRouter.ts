@@ -659,7 +659,7 @@ export async function handleFunctionsRequest(req: any, res: any): Promise<boolea
           // Coba ArexansPay
           try {
             const arexResp = await fetch(`https://www.arexanspay.my.id/api/qris/${encodeURIComponent(arexansQrisId)}`, {
-              headers: { 'X-API-Key': arexApiKey },
+              headers: { 'X-API-Key': arexansApiKey },
             });
             const arexData = await arexResp.json().catch(() => null);
             const rawQris = arexData?.raw_qris || arexData?.data?.[0]?.raw_qris;

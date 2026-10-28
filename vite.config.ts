@@ -4,7 +4,6 @@ dotenv.config();
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react-swc";
 import path from "path";
-import { componentTagger } from "lovable-tagger";
 import { handleRestRequest, handleFunctionsRequest, handleAuthRequest } from "./src/server/cloudsqlRouter.ts";
 import { createPool } from "./src/db/index.ts";
 
@@ -460,7 +459,7 @@ export default defineConfig(({ mode }) => ({
       },
     },
   },
-  plugins: [react(), mode === "development" && componentTagger(), publicRawScriptPlugin()].filter(Boolean),
+  plugins: [react(), publicRawScriptPlugin()].filter(Boolean),
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
