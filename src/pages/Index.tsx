@@ -8,6 +8,7 @@ import MaintenancePage from '@/components/MaintenancePage';
 import { toast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
 import { isDeveloperTesting, getMaintenanceState } from '@/lib/maintenanceStore';
+import { QrisLogo, PopularBankLogos, CardAndPaylaterBadges, EWalletBadges } from '@/components/PaymentLogos';
 
 interface Ad {
   id: string;
@@ -41,6 +42,11 @@ interface PaymentData {
   slug?: string;
   vaBanks?: Array<{ code: string; name: string }>;
   quotes?: any;
+  selectedChannel?: 'QRIS' | 'VA' | 'AKULAKU' | 'CARD';
+  selectedBank?: string;
+  vaData?: any;
+  akulakuData?: any;
+  cardData?: any;
   expiresAt: string;
   productId?: string;
 }
@@ -149,6 +155,11 @@ const Index = () => {
     slug?: string;
     vaBanks?: Array<{ code: string; name: string }>;
     quotes?: any;
+    selectedChannel?: 'QRIS' | 'VA' | 'AKULAKU' | 'CARD';
+    selectedBank?: string;
+    vaData?: any;
+    akulakuData?: any;
+    cardData?: any;
   }) => {
     setFormData({ key: order.licenseKey, duration: `${order.days} hari` });
     setSelectedPkg(order.packageName as any);
@@ -166,6 +177,11 @@ const Index = () => {
       slug: order.slug,
       vaBanks: order.vaBanks,
       quotes: order.quotes,
+      selectedChannel: order.selectedChannel,
+      selectedBank: order.selectedBank,
+      vaData: order.vaData,
+      akulakuData: order.akulakuData,
+      cardData: order.cardData,
     };
     setPaymentData(newPaymentData);
     setStep(3);
@@ -424,7 +440,9 @@ const Index = () => {
     e: React.FormEvent,
     submittedPromoCode?: string,
     discountedAmount?: number,
-    chosenGateway?: 'arexanspay' | 'xmpayment' | 'poketo'
+    chosenGateway?: 'arexanspay' | 'xmpayment' | 'poketo',
+    chosenChannel?: 'QRIS' | 'VA' | 'AKULAKU' | 'CARD',
+    chosenBank?: string
   ) => {
     e.preventDefault();
     setErrorMsg('');
@@ -459,7 +477,7 @@ const Index = () => {
 
     // If buyer directly picked a gateway in the form, use it!
     if (chosenGateway) {
-      await createPayment(calculatedAmount, durationData!.days, submittedPromoCode, chosenGateway);
+      await createPayment(calculatedAmount, durationData!.days, submittedPromoCode, chosenGateway, chosenChannel, chosenBank);
       return;
     }
 
@@ -470,7 +488,9 @@ const Index = () => {
     amount: number,
     days: number,
     promoCode?: string,
-    gatewayOverride?: 'arexanspay' | 'xmpayment' | 'pakasir' | 'poketo'
+    gatewayOverride?: 'arexanspay' | 'xmpayment' | 'pakasir' | 'poketo',
+    channel?: 'QRIS' | 'VA' | 'AKULAKU' | 'CARD',
+    bank?: string
   ) => {
     setLoading(true);
     try {
@@ -484,6 +504,8 @@ const Index = () => {
           promoCode: promoCode || undefined,
           deviceId,
           gateway: gatewayOverride,
+          channel: channel || 'QRIS',
+          bank: bank || 'BRI',
         }
       });
 
@@ -533,6 +555,11 @@ const Index = () => {
         slug: data.slug,
         vaBanks: data.vaBanks,
         quotes: data.quotes,
+        selectedChannel: data.selectedChannel || channel,
+        selectedBank: data.selectedBank || bank,
+        vaData: data.vaData,
+        akulakuData: data.akulakuData,
+        cardData: data.cardData,
         expiresAt: data.expiresAt
       };
 
@@ -610,40 +637,51 @@ const Index = () => {
             <div className="grid gap-3">
               <button
                 onClick={async () => { const p = pendingPayment; setPendingPayment(null); await createPayment(p.amount, p.days, p.promoCode, 'poketo'); }}
-                className="w-full p-3 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/50 text-emerald-300 text-left transition shadow-md shadow-emerald-500/10"
+                className="w-full p-3 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/40 text-left transition shadow-md shadow-emerald-500/10 space-y-1.5"
               >
                 <div className="flex items-center justify-between">
-                  <span className="font-semibold">Poketo (Otomatis)</span>
+                  <span className="font-semibold text-emerald-300 text-sm">Virtual Account, PayLater &amp; Kartu</span>
                   <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 font-mono">
-                    QRIS • E-Wallet • VA
+                    10 Bank • Otomatis
                   </span>
                 </div>
-                <p className="text-xs opacity-80 mt-1">Pembayaran otomatis & instan realtime</p>
+                <p className="text-xs text-muted-foreground">Virtual Account (BRI, BNI, Permata, dll), Akulaku &amp; Kartu Kredit</p>
+                <div className="pt-1 flex flex-wrap items-center gap-1.5">
+                  <PopularBankLogos limit={4} />
+                  <CardAndPaylaterBadges />
+                </div>
               </button>
 
               <button
                 disabled={!developerOnline}
                 onClick={async () => { const p = pendingPayment; setPendingPayment(null); await createPayment(p.amount, p.days, p.promoCode, 'arexanspay'); }}
-                className={`w-full p-3 rounded-xl border text-left transition ${developerOnline ? 'bg-primary/20 hover:bg-primary/30 border-primary/50 text-primary' : 'bg-muted/20 border-border text-muted-foreground cursor-not-allowed opacity-60'}`}
+                className={`w-full p-3 rounded-xl border text-left transition space-y-1.5 ${developerOnline ? 'bg-cyan-500/15 hover:bg-cyan-500/25 border-cyan-500/40 text-cyan-200' : 'bg-muted/20 border-border text-muted-foreground cursor-not-allowed opacity-60'}`}
               >
                 <div className="flex items-center justify-between">
-                  <span className="font-semibold">Qris 1 (ArexansPay)</span>
-                  <span className={`text-[10px] px-2 py-0.5 rounded-full ${developerOnline ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40' : 'bg-red-500/20 text-red-400 border border-red-500/40'}`}>
+                  <span className="font-semibold text-sm">Jalur 1: QRIS Instan (Bebas Biaya Admin)</span>
+                  <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${developerOnline ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40' : 'bg-red-500/20 text-red-400 border border-red-500/40'}`}>
                     {developerOnline ? 'Online' : 'Offline'}
                   </span>
                 </div>
-                <p className="text-xs opacity-80 mt-1">Tidak ada pajak</p>
+                <p className="text-xs text-muted-foreground">Bebas biaya admin via seluruh e-wallet &amp; mobile banking</p>
+                <div className="pt-1">
+                  <EWalletBadges />
+                </div>
               </button>
 
               <button
                 onClick={async () => { const p = pendingPayment; setPendingPayment(null); await createPayment(p.amount, p.days, p.promoCode, 'xmpayment'); }}
-                className="w-full p-3 rounded-xl bg-secondary/20 hover:bg-secondary/30 border border-secondary/50 text-secondary text-left transition"
+                className="w-full p-3 rounded-xl bg-indigo-500/15 hover:bg-indigo-500/25 border border-indigo-500/40 text-left transition space-y-1.5"
               >
                 <div className="flex items-center justify-between">
-                  <span className="font-semibold">Qris 2 (XMPayment)</span>
-                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/40">Online</span>
+                  <span className="font-semibold text-indigo-300 text-sm">Jalur 2: QRIS Otomatis (Kode Unik 24/7)</span>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/40">Online 24/7</span>
                 </div>
-                <p className="text-xs opacity-80 mt-1">Otomatis & Kode Unik Realtime</p>
+                <p className="text-xs text-muted-foreground">Verifikasi mutasi realtime 24 jam nonstop dengan kode unik</p>
+                <div className="pt-1 flex items-center gap-1.5">
+                  <QrisLogo size="xs" />
+                  <span className="text-[10px] text-muted-foreground">Dukungan Semua Aplikasi Pembayaran</span>
+                </div>
               </button>
               <button
                 onClick={() => setPendingPayment(null)}

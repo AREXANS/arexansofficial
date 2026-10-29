@@ -18,10 +18,13 @@ export const XMPAYMENT_BASE = "https://xmpayment.my.id";
 export const DEFAULT_XMP_API_KEY = "xmp_live_d2b8ea709d5d7a57ff974cd771435e0f58d4da888593350b";
 export const DEFAULT_XMP_WEBHOOK_SECRET = "whsec_bYGhuiJpREZP4N5zB0bCMOP6LrDAQ3wsOJzOThgNZKY";
 
+export const DEFAULT_POKETO_API_KEY = "sk_live_iZEBli3dV1buw_sFB4DhUfIDVKGp-itZ";
+export const DEFAULT_POKETO_WEBHOOK_SECRET = "whsec_b71_8KfymmRPeNNQP2wigV2jshWTrC-X";
+
 export const PAID_STATUSES = ["paid", "success", "completed", "settled"];
 
 export interface PaymentConfig {
-  gateway: string; // "xmpayment" | "arexanspay" | "both"
+  gateway: string; // "xmpayment" | "arexanspay" | "poketo" | "both"
   simulation: boolean;
   discordWebhookUrl: string;
   arexanspay: {
@@ -37,6 +40,11 @@ export interface PaymentConfig {
     mode: string; // "live" | "sandbox"
     configured: boolean;
   };
+  poketo: {
+    apiKey: string;
+    webhookSecret: string;
+    configured: boolean;
+  };
   pakasir: {
     slug: string;
     apiKey: string;
@@ -48,6 +56,7 @@ export interface PaymentConfig {
 const SETTING_KEYS = [
   "payment_gateway", "payment_simulation", "discord_webhook_url",
   "xmpayment_api_key", "xmp_api_key", "xmpayment_webhook_secret", "xmp_webhook_secret", "xmpayment_mode",
+  "poketo_api_key", "poketo_webhook_key", "poketo_webhook_secret",
   "arexanspay_api_key", "arexanspay_license_key", "arexanspay_qris_id",
   "arexanspay_webhook_key", "arexanspay_number_id",
   // legacy aliases for seamless backward compatibility
@@ -97,6 +106,11 @@ export async function loadPaymentConfig(supabase: any): Promise<PaymentConfig> {
       mode: xmpMode,
       configured: !!xmpApiKey,
     },
+    poketo: {
+      apiKey: pick("poketo_api_key") || DEFAULT_POKETO_API_KEY,
+      webhookSecret: pick("poketo_webhook_key", "poketo_webhook_secret") || DEFAULT_POKETO_WEBHOOK_SECRET,
+      configured: true,
+    },
     pakasir: {
       slug: pick("pakasir_slug"),
       apiKey: pick("pakasir_api_key"),
@@ -107,7 +121,7 @@ export async function loadPaymentConfig(supabase: any): Promise<PaymentConfig> {
 }
 
 /** Resolve which gateway to use for a NEW transaction. */
-export function resolveGateway(cfg: PaymentConfig, requested?: string): "arexanspay" | "xmpayment" {
+export function resolveGateway(cfg: PaymentConfig, requested?: string): "arexanspay" | "xmpayment" | "poketo" {
   const norm = (v?: string) => {
     if (!v) return "";
     const l = v.toLowerCase();
@@ -117,8 +131,9 @@ export function resolveGateway(cfg: PaymentConfig, requested?: string): "arexans
   };
 
   const req = norm(requested);
+  if (req === "poketo" || req === "arexanspay" || req === "xmpayment") return req as any;
+  if (cfg.gateway === "poketo") return "poketo";
   if (cfg.gateway === "both") {
-    if (req === "arexanspay" || req === "xmpayment") return req;
     return cfg.xmpayment.configured ? "xmpayment" : "arexanspay";
   }
   return cfg.gateway === "arexanspay" ? "arexanspay" : "xmpayment";
@@ -544,4 +559,232 @@ export function timingSafeEqual(a: string, b: string): boolean {
   let diff = 0;
   for (let i = 0; i < ab.length; i++) diff |= ab[i] ^ bb[i];
   return diff === 0;
+}
+
+/**
+ * POKETO PAYMENT GATEWAY INTEGRATION (https://poketo.id/docs)
+ * REST API for invoice creation, public channel pay (QRIS, VA Bank, PayLater, Card), and status check.
+ */
+export const POKETO_API_BASE = "https://poketo.id";
+export const POKETO_PAY_BASE = "https://pay.poketo.id";
+
+export interface PoketoInvoiceResult {
+  ok: boolean;
+  id?: string;
+  slug?: string;
+  paymentUrl?: string;
+  qrString?: string;
+  totalAmount?: number;
+  vaBanks?: Array<{ code: string; name: string }>;
+  quotes?: any;
+  selectedChannel?: string;
+  selectedBank?: string;
+  vaData?: any;
+  akulakuData?: any;
+  cardData?: any;
+  error?: string;
+}
+
+export async function poketoCreateInvoice(
+  cfg: PaymentConfig,
+  orderId: string,
+  amount: number,
+  opts: {
+    customerName?: string;
+    customerWhatsapp?: string;
+    title?: string;
+    channel?: string;
+    bank?: string;
+    payer?: any;
+  } = {}
+): Promise<PoketoInvoiceResult> {
+  const apiKey = cfg.poketo?.apiKey || DEFAULT_POKETO_API_KEY;
+  if (!apiKey) {
+    return { ok: false, error: "API Key Poketo belum dikonfigurasi." };
+  }
+
+  const requestedChannel = (opts.channel || "QRIS").toUpperCase();
+  const requestedBank = (opts.bank || "BRI").toUpperCase();
+  const cleanName = opts.customerName || "Customer Arexans";
+
+  try {
+    const res = await fetch(`${POKETO_API_BASE}/api/v1/invoices`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+        "Idempotency-Key": orderId,
+      },
+      body: JSON.stringify({
+        amount: Math.round(Number(amount)),
+        title: opts.title || `Arexans Store - ${orderId}`,
+        referenceId: orderId,
+        customer: {
+          name: cleanName,
+          email: "customer@arexans.my.id",
+          phone: opts.customerWhatsapp || null,
+        },
+      }),
+    });
+
+    const json = await res.json().catch(() => null);
+    if (!json || !json.data) {
+      return { ok: false, error: json?.message || `Gagal membuat invoice Poketo (HTTP ${res.status})` };
+    }
+
+    const inv = json.data;
+    const paymentUrl = inv.paymentUrl || `https://pay.poketo.id/inv/${inv.id}`;
+    let totalAmount = inv.totalAmount || amount;
+    const matchSlug = (paymentUrl || "").match(/\/inv\/([a-zA-Z0-9_\-]+)/);
+    const slug = matchSlug ? matchSlug[1] : (inv.id || "");
+
+    let qrString = "";
+    let vaBanks: any[] = [];
+    let quotes: any = null;
+    let initialVaData: any = null;
+    let initialAkulakuData: any = null;
+    let initialCardData: any = null;
+
+    // Fetch public invoice details (vaBanks, quotes)
+    try {
+      const pubRes = await fetch(`${POKETO_PAY_BASE}/api/public/invoices/${encodeURIComponent(slug)}`);
+      const pubData = await pubRes.json().catch(() => null);
+      if (pubData?.invoice) {
+        vaBanks = pubData.invoice.vaBanks || [];
+        quotes = pubData.invoice.quotes || null;
+      }
+
+      // Default initiate QRIS
+      const qrisRes = await fetch(`${POKETO_PAY_BASE}/api/public/invoices/${encodeURIComponent(slug)}/pay`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ channel: "QRIS" }),
+      });
+      const qrisData = await qrisRes.json().catch(() => null);
+      if (qrisData?.payment?.qrContent) {
+        qrString = qrisData.payment.qrContent;
+        if (requestedChannel === "QRIS") {
+          totalAmount = qrisData.payment.amount || quotes?.QRIS?.totalAmount || totalAmount;
+        }
+      }
+
+      // If user selected VA, initiate immediately
+      if (requestedChannel === "VA") {
+        const vaRes = await fetch(`${POKETO_PAY_BASE}/api/public/invoices/${encodeURIComponent(slug)}/pay`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ channel: "VA", bank: requestedBank }),
+        });
+        const vaJson = await vaRes.json().catch(() => null);
+        if (vaJson?.success && vaJson?.payment) {
+          initialVaData = vaJson.payment;
+          totalAmount = vaJson.payment.amount || quotes?.VA?.totalAmount || totalAmount;
+        }
+      } else if (requestedChannel === "AKULAKU") {
+        const payer = opts.payer || {
+          name: cleanName,
+          phone: opts.customerWhatsapp || "08123456789",
+          address: "Jl. Merdeka No. 1",
+          city: "Jakarta Selatan",
+          state: "DKI Jakarta",
+          postcode: "12190",
+        };
+        const akuRes = await fetch(`${POKETO_PAY_BASE}/api/public/invoices/${encodeURIComponent(slug)}/pay`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ channel: "AKULAKU", payer }),
+        });
+        const akuJson = await akuRes.json().catch(() => null);
+        if (akuJson?.success && akuJson?.payment) {
+          initialAkulakuData = akuJson.payment;
+          totalAmount = akuJson.payment.amount || quotes?.AKULAKU?.totalAmount || totalAmount;
+        }
+      } else if (requestedChannel === "CARD") {
+        const cardRes = await fetch(`${POKETO_PAY_BASE}/api/public/invoices/${encodeURIComponent(slug)}/pay`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ channel: "CARD" }),
+        });
+        const cardJson = await cardRes.json().catch(() => null);
+        if (cardJson?.success && cardJson?.payment) {
+          initialCardData = cardJson.payment;
+          totalAmount = cardJson.payment.amount || quotes?.CARD?.totalAmount || totalAmount;
+        }
+      }
+    } catch (pubErr) {
+      console.warn("Poketo public pay prefetch error:", pubErr);
+    }
+
+    return {
+      ok: true,
+      id: inv.id,
+      slug,
+      paymentUrl,
+      qrString,
+      totalAmount,
+      vaBanks,
+      quotes,
+      selectedChannel: requestedChannel,
+      selectedBank: requestedBank,
+      vaData: initialVaData,
+      akulakuData: initialAkulakuData,
+      cardData: initialCardData,
+    };
+  } catch (err: any) {
+    console.error("poketoCreateInvoice error:", err);
+    return { ok: false, error: `Gagal menghubungi Poketo: ${err?.message || err}` };
+  }
+}
+
+export async function poketoCheckStatus(
+  cfg: PaymentConfig,
+  slugOrId: string
+): Promise<{ status: string; isPaid: boolean; totalAmount?: number; raw?: any }> {
+  if (!slugOrId) return { status: "", isPaid: false };
+  const clean = slugOrId.replace(/.*\/inv\//, "").trim();
+
+  // Try public invoice endpoint first
+  try {
+    const res = await fetch(`${POKETO_PAY_BASE}/api/public/invoices/${encodeURIComponent(clean)}`);
+    if (res.ok) {
+      const json = await res.json().catch(() => null);
+      const inv = json?.invoice;
+      if (inv) {
+        const st = String(inv.status || "").toUpperCase();
+        const isPaid = st === "PAID" || st === "SETTLED" || st === "SUCCESS";
+        return {
+          status: st.toLowerCase(),
+          isPaid,
+          totalAmount: inv.totalAmount || inv.amount,
+          raw: inv,
+        };
+      }
+    }
+  } catch {}
+
+  // If public failed or 404, try API v1 with API key
+  const apiKey = cfg.poketo?.apiKey || DEFAULT_POKETO_API_KEY;
+  if (apiKey) {
+    try {
+      const res = await fetch(`${POKETO_API_BASE}/api/v1/invoices/${encodeURIComponent(clean)}`, {
+        headers: { "Authorization": `Bearer ${apiKey}` },
+      });
+      if (res.ok) {
+        const json = await res.json().catch(() => null);
+        const inv = json?.data;
+        if (inv) {
+          const st = String(inv.status || "").toUpperCase();
+          const isPaid = st === "PAID" || st === "SETTLED" || st === "SUCCESS";
+          return {
+            status: st.toLowerCase(),
+            isPaid,
+            totalAmount: inv.totalAmount || inv.amount,
+            raw: inv,
+          };
+        }
+      }
+    } catch {}
+  }
+
+  return { status: "", isPaid: false };
 }

@@ -2,7 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import {
   corsHeaders, jsonHeaders, loadPaymentConfig, resolveGateway,
-  arexansCreateQris, xmpaymentCreateQris, pakasirCreateQris, qrImageUrl, saveGatewayTxId,
+  arexansCreateQris, xmpaymentCreateQris, pakasirCreateQris, poketoCreateInvoice, qrImageUrl, saveGatewayTxId,
 } from "../_shared/payment.ts";
 
 serve(async (req) => {
@@ -21,6 +21,7 @@ serve(async (req) => {
     const {
       amount, customerName, packageName, packageDuration,
       licenseKey: customerLicenseKey, customerWhatsapp, deviceId, gateway: requestedGateway,
+      channel, bank, payer
     } = body;
 
     if (!amount || amount < 1000) {
@@ -33,10 +34,56 @@ serve(async (req) => {
 
     let qrString = "";
     let qrisUrl = "";
+    let paymentUrl = "";
     let totalAmount = amount;
     let gatewayTxId = "";
+    let isPoketo = false;
+    let poketoSlug = "";
+    let vaBanks: any[] = [];
+    let quotes: any = null;
+    let selectedChannel = channel || "QRIS";
+    let selectedBank = bank || "BRI";
+    let vaData: any = null;
+    let akulakuData: any = null;
+    let cardData: any = null;
 
-    if (gateway === "arexanspay") {
+    if (gateway === "poketo" || (requestedGateway === "poketo" && amount >= 10000)) {
+      const cleanCustName = customerName || customerLicenseKey || "Customer";
+      const pRes = await poketoCreateInvoice(cfg, orderId, amount, {
+        customerName: cleanCustName,
+        customerWhatsapp,
+        title: `Arexans - ${packageName || 'Tools'} (${packageDuration || 1} Hari)`,
+        channel: selectedChannel,
+        bank: selectedBank,
+        payer,
+      });
+
+      if (!pRes.ok) {
+        return new Response(JSON.stringify({ error: pRes.error }), { status: 400, headers: jsonHeaders });
+      }
+
+      isPoketo = true;
+      poketoSlug = pRes.slug || "";
+      paymentUrl = pRes.paymentUrl || "";
+      qrString = pRes.qrString || "";
+      totalAmount = pRes.totalAmount || amount;
+      qrisUrl = qrString ? qrImageUrl(qrString) : paymentUrl;
+      vaBanks = pRes.vaBanks || [];
+      quotes = pRes.quotes || null;
+      selectedChannel = pRes.selectedChannel || selectedChannel;
+      selectedBank = pRes.selectedBank || selectedBank;
+      vaData = pRes.vaData || null;
+      akulakuData = pRes.akulakuData || null;
+      cardData = pRes.cardData || null;
+
+      if (poketoSlug) {
+        await supabase.from("app_settings").upsert({
+          key: `poketo_tx_${orderId}`,
+          value: poketoSlug,
+          description: "Poketo invoice slug",
+        }, { onConflict: "key" });
+      }
+    } else if (gateway === "arexanspay") {
       const result = await arexansCreateQris(cfg, amount);
       if (!result.ok) {
         return new Response(JSON.stringify({ success: false, fallback: true, error: result.error }),
@@ -99,11 +146,21 @@ serve(async (req) => {
       transactionId: orderId,
       qr_string: qrString,
       qris_url: qrisUrl,
+      payment_url: paymentUrl || undefined,
       originalAmount: amount,
       totalAmount,
       expiresAt: expiresAt.toISOString(),
-      mode: gateway === "arexanspay" ? "live" : (gateway === "xmpayment" ? cfg.xmpayment.mode : cfg.pakasir.mode),
-      gateway,
+      mode: isPoketo ? "live" : (gateway === "arexanspay" ? "live" : (gateway === "xmpayment" ? cfg.xmpayment.mode : cfg.pakasir.mode)),
+      gateway: isPoketo ? "poketo" : gateway,
+      isPoketo,
+      slug: poketoSlug,
+      vaBanks,
+      quotes,
+      selectedChannel,
+      selectedBank,
+      vaData,
+      akulakuData,
+      cardData,
     }), { status: 200, headers: jsonHeaders });
   } catch (error: unknown) {
     console.error("create-payment error:", error);

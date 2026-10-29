@@ -49,13 +49,89 @@ serve(async (req) => {
     const queryKey = url.searchParams.get("key") || url.searchParams.get("webhook_key") || "";
 
     // Detect source
+    const poketoSigHeader = req.headers.get("x-poketo-signature") || "";
+    const isPoketo = !!poketoSigHeader || !!(body.data as any)?.referenceId || (!!body.referenceId && !body.order_id);
     const xmpSigHeader = req.headers.get("x-xmp-signature") || "";
     const xmpEventHeader = req.headers.get("x-xmp-event") || "";
-    const isXMPayment = !!xmpSigHeader || !!xmpEventHeader || (body.event && typeof body.event === "string" && (body.event.startsWith("invoice.") || body.event === "test.ping")) || (body.data && (body.data as any).order_id && !body.project);
-    const isPakasir = !isXMPayment && !!body.order_id && !!body.project;
-    const isArexans = !isXMPayment && (!body.project && (!!body.transactionId || !!body.transaction_id || !!body.secret
+    const isXMPayment = !isPoketo && (!!xmpSigHeader || !!xmpEventHeader || (body.event && typeof body.event === "string" && (body.event.startsWith("invoice.") || body.event === "test.ping")) || (body.data && (body.data as any).order_id && !body.project));
+    const isPakasir = !isPoketo && !isXMPayment && !!body.order_id && !!body.project;
+    const isArexans = !isPoketo && !isXMPayment && (!body.project && (!!body.transactionId || !!body.transaction_id || !!body.secret
       || !!req.headers.get("x-arexanspay-signature") || !!req.headers.get("x-casaku-signature")
       || !!req.headers.get("x-webhook-key") || !!body.webhook_key));
+
+    if (isPoketo) {
+      // === POKETO.ID (https://poketo.id/docs) ===
+      const event = String(body.event || "");
+      const pktData = (body.data as any) || body;
+      const refId = String(pktData.referenceId || body.referenceId || pktData.id || body.id || "");
+      if (!refId) {
+        console.warn("[payment-webhook] poketo missing referenceId");
+        return genericError(400);
+      }
+
+      // Check webhook secret
+      const { data: whSettings } = await supabase
+        .from("app_settings").select("key, value")
+        .in("key", ["poketo_webhook_secret", "poketo_webhook_key", "poketo_api_key"]);
+      const s = Object.fromEntries((whSettings || []).map((r: any) => [r.key, (r.value ?? "").toString().trim()]));
+      const secret = s.poketo_webhook_secret || s.poketo_webhook_key || "whsec_b71_8KfymmRPeNNQP2wigV2jshWTrC-X";
+      const apiKey = s.poketo_api_key || "sk_live_iZEBli3dV1buw_sFB4DhUfIDVKGp-itZ";
+
+      let verified = false;
+
+      // 1. Verify HMAC-SHA256 signature if header is present
+      const sigHeader = poketoSigHeader || req.headers.get("x-signature") || "";
+      if (sigHeader && secret) {
+        try {
+          const enc = new TextEncoder();
+          const key = await crypto.subtle.importKey(
+            "raw", enc.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
+          );
+          const sig = await crypto.subtle.sign("HMAC", key, enc.encode(rawBodyText));
+          const expectedSig = Array.from(new Uint8Array(sig)).map((b) => b.toString(16).padStart(2, "0")).join("");
+          verified = await timingSafeEqual(sigHeader.toLowerCase().trim(), expectedSig.toLowerCase().trim());
+        } catch (err) {
+          console.error("[payment-webhook] poketo signature error:", err);
+        }
+      }
+
+      // 2. Fallback: verify directly with Poketo API v1
+      if (!verified) {
+        try {
+          const invId = String(pktData.id || pktData.slug || "");
+          if (invId) {
+            const checkRes = await fetch(`https://poketo.id/api/v1/invoices/${encodeURIComponent(invId)}`, {
+              headers: { "Authorization": `Bearer ${apiKey}` },
+            });
+            const checkJson = await checkRes.json();
+            const st = String(checkJson?.data?.status || "").toUpperCase();
+            if (st === "PAID" || st === "SETTLED") {
+              verified = true;
+            }
+          }
+        } catch (vErr) {
+          console.error("[payment-webhook] poketo verify API error:", vErr);
+        }
+      }
+
+      const status = String(pktData.status || "").toUpperCase();
+      if (event === "invoice.paid" || status === "PAID" || status === "SETTLED") {
+        const { data: tx } = await supabase
+          .from("transactions").select("*")
+          .or(`transaction_id.eq.${refId},id.eq.${refId}`)
+          .maybeSingle();
+
+        if (tx && tx.status !== "paid" && tx.status !== "claimed") {
+          await supabase.from("transactions").update({
+            status: "claimed",
+            paid_at: new Date().toISOString()
+          }).eq("id", tx.id);
+          await handlePostPayment(supabase, tx);
+        }
+      }
+
+      return new Response(JSON.stringify({ received: true }), { status: 200, headers: jsonHeaders });
+    }
 
     if (isXMPayment) {
       // === XMPAYMENT (https://xmpayment.my.id/dashboard/docs) ===

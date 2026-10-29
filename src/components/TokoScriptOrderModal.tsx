@@ -9,8 +9,19 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
-import { Dices, ShieldCheck, Loader2, Sparkles, CheckCircle2, QrCode, Tag } from 'lucide-react';
+import { Dices, ShieldCheck, Loader2, Sparkles, CheckCircle2, QrCode, Tag, Building2 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
+import {
+  BankLogo,
+  VisaLogo,
+  MastercardLogo,
+  JcbLogo,
+  AkulakuLogo,
+  QrisLogo,
+  EWalletBadges,
+  PopularBankLogos,
+  CardAndPaylaterBadges
+} from './PaymentLogos';
 
 interface TokoScriptOrderModalProps {
   isOpen: boolean;
@@ -30,6 +41,16 @@ interface TokoScriptOrderModalProps {
     productTitle: string;
     days: number;
     productId?: string;
+    gateway?: string;
+    isPoketo?: boolean;
+    slug?: string;
+    vaBanks?: Array<{ code: string; name: string }>;
+    quotes?: any;
+    selectedChannel?: 'QRIS' | 'VA' | 'AKULAKU' | 'CARD';
+    selectedBank?: string;
+    vaData?: any;
+    akulakuData?: any;
+    cardData?: any;
   }) => void;
 }
 
@@ -48,6 +69,8 @@ export const TokoScriptOrderModal: React.FC<TokoScriptOrderModalProps> = ({
 
   // Payment gateway states (1, 2, 3)
   const [selectedGateway, setSelectedGateway] = useState<'arexanspay' | 'xmpayment' | 'poketo'>('xmpayment');
+  const [poketoChannel, setPoketoChannel] = useState<'QRIS' | 'VA' | 'AKULAKU' | 'CARD'>('QRIS');
+  const [poketoBank, setPoketoBank] = useState<string>('BRI');
   const [enabledGateways, setEnabledGateways] = useState<string[]>(['arexanspay', 'xmpayment', 'poketo']);
   const [phoneOnline, setPhoneOnline] = useState<boolean>(false);
 
@@ -154,12 +177,12 @@ export const TokoScriptOrderModal: React.FC<TokoScriptOrderModalProps> = ({
     }
 
     if (selectedGateway === 'arexanspay' && !isArexansPayOnline) {
-      setErrorMsg('Payment 1 (ArexansPay) sedang offline karena HP admin mati / tanpa data internet. Silakan pilih Payment 2 atau 3.');
+      setErrorMsg('Jalur 1 sedang offline / antrean penuh. Silakan pilih Jalur 2 (QRIS Otomatis) atau Jalur 3 (Virtual Account).');
       return;
     }
 
     if (selectedGateway === 'poketo' && currentPrice < 10000) {
-      setErrorMsg(`Payment 3 (Poketo) hanya online untuk order minimal Rp 10.000 (total paket ini: ${formatRupiah(currentPrice)}). Silakan pilih Payment 1 atau 2.`);
+      setErrorMsg(`Jalur 3 (Virtual Account & Kartu) hanya tersedia untuk order minimal Rp 10.000 (total paket ini: ${formatRupiah(currentPrice)}). Silakan pilih Jalur 1 atau Jalur 2.`);
       return;
     }
 
@@ -187,6 +210,8 @@ export const TokoScriptOrderModal: React.FC<TokoScriptOrderModalProps> = ({
             deviceId,
             customerName: `Script Buyer (${product.title})`,
             gateway: selectedGateway,
+            channel: selectedGateway === 'poketo' ? poketoChannel : 'QRIS',
+            bank: selectedGateway === 'poketo' && poketoChannel === 'VA' ? poketoBank : 'BRI',
           }
         });
 
@@ -255,7 +280,7 @@ export const TokoScriptOrderModal: React.FC<TokoScriptOrderModalProps> = ({
 
       toast({
         title: 'Pesanan Berhasil Dibuat',
-        description: `Key ${cleanKey} untuk paket ${selectedPackage.name} siap dibayar via QRIS.`,
+        description: `Key ${cleanKey} untuk paket ${selectedPackage.name} siap dibayar via QRIS / VA.`,
       });
 
       onClose();
@@ -277,6 +302,11 @@ export const TokoScriptOrderModal: React.FC<TokoScriptOrderModalProps> = ({
         slug: edgeData?.slug,
         vaBanks: edgeData?.vaBanks,
         quotes: edgeData?.quotes,
+        selectedChannel: edgeData?.selectedChannel || (selectedGateway === 'poketo' ? poketoChannel : undefined),
+        selectedBank: edgeData?.selectedBank || (selectedGateway === 'poketo' && poketoChannel === 'VA' ? poketoBank : undefined),
+        vaData: edgeData?.vaData,
+        akulakuData: edgeData?.akulakuData,
+        cardData: edgeData?.cardData,
       });
     } catch (err: any) {
       console.error(err);
@@ -414,12 +444,12 @@ export const TokoScriptOrderModal: React.FC<TokoScriptOrderModalProps> = ({
             </div>
           )}
 
-          {/* PILIHAN PAYMENT GATEWAY 1, 2, 3 */}
+          {/* PILIHAN METODE & JALUR PEMBAYARAN */}
           <div className="space-y-2 pt-1">
             <Label className="text-xs font-semibold text-foreground flex items-center justify-between">
-              <span>Pilih Payment Gateway</span>
+              <span>Pilih Jalur &amp; Metode Pembayaran</span>
               <span className="font-mono text-[10px] text-muted-foreground">
-                {selectedGateway === 'arexanspay' ? 'Payment 1' : selectedGateway === 'xmpayment' ? 'Payment 2' : 'Payment 3'}
+                {selectedGateway === 'arexanspay' ? 'Jalur 1 Dipilih' : selectedGateway === 'xmpayment' ? 'Jalur 2 Dipilih' : 'Jalur 3 Dipilih'}
               </span>
             </Label>
             <div className="grid grid-cols-1 gap-1.5">
@@ -428,7 +458,7 @@ export const TokoScriptOrderModal: React.FC<TokoScriptOrderModalProps> = ({
                   type="button"
                   disabled={!isArexansPayOnline}
                   onClick={() => isArexansPayOnline && setSelectedGateway('arexanspay')}
-                  className={`p-2.5 rounded-xl border text-left transition text-xs flex items-center justify-between ${
+                  className={`p-2.5 rounded-xl border text-left transition text-xs space-y-1.5 ${
                     selectedGateway === 'arexanspay' && isArexansPayOnline
                       ? 'border-cyan-500 bg-cyan-500/15 text-foreground ring-1 ring-cyan-500'
                       : !isArexansPayOnline
@@ -436,15 +466,20 @@ export const TokoScriptOrderModal: React.FC<TokoScriptOrderModalProps> = ({
                       : 'border-border/70 bg-card/40 hover:border-cyan-500/40 text-muted-foreground'
                   }`}
                 >
-                  <div>
-                    <div className="font-semibold text-foreground">Payment 1: ArexansPay</div>
-                    <div className="text-[10px] text-muted-foreground">QRIS Instan (No Admin Fee)</div>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="font-semibold text-foreground">Jalur 1: QRIS Instan (Bebas Admin)</div>
+                      <div className="text-[10px] text-muted-foreground">Bebas biaya admin via seluruh e-wallet</div>
+                    </div>
+                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${
+                      isArexansPayOnline ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'
+                    }`}>
+                      {isArexansPayOnline ? 'Online' : 'Offline (Antrean Penuh)'}
+                    </span>
                   </div>
-                  <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${
-                    isArexansPayOnline ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'
-                  }`}>
-                    {isArexansPayOnline ? 'Online' : 'Offline (HP Mati)'}
-                  </span>
+                  <div className="pt-0.5">
+                    <EWalletBadges />
+                  </div>
                 </button>
               )}
 
@@ -452,45 +487,191 @@ export const TokoScriptOrderModal: React.FC<TokoScriptOrderModalProps> = ({
                 <button
                   type="button"
                   onClick={() => setSelectedGateway('xmpayment')}
-                  className={`p-2.5 rounded-xl border text-left transition text-xs flex items-center justify-between ${
+                  className={`p-2.5 rounded-xl border text-left transition text-xs space-y-1.5 ${
                     selectedGateway === 'xmpayment'
                       ? 'border-indigo-500 bg-indigo-500/15 text-foreground ring-1 ring-indigo-500'
                       : 'border-border/70 bg-card/40 hover:border-indigo-500/40 text-muted-foreground'
                   }`}
                 >
-                  <div>
-                    <div className="font-semibold text-foreground">Payment 2: XMPayment</div>
-                    <div className="text-[10px] text-muted-foreground">QRIS Otomatis &amp; Realtime 24/7</div>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="font-semibold text-foreground">Jalur 2: QRIS Otomatis (Kode Unik 24/7)</div>
+                      <div className="text-[10px] text-muted-foreground">Verifikasi mutasi otomatis realtime 24/7</div>
+                    </div>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-emerald-500/20 text-emerald-400">
+                      Online 24/7
+                    </span>
                   </div>
-                  <span className="text-[10px] px-2 py-0.5 rounded-full font-medium bg-emerald-500/20 text-emerald-400">
-                    Online
-                  </span>
+                  <div className="pt-0.5 flex items-center gap-1.5">
+                    <QrisLogo size="xs" />
+                    <span className="text-[10px] text-muted-foreground">Semua Bank &amp; E-Wallet</span>
+                  </div>
                 </button>
               )}
 
               {enabledGateways.includes('poketo') && (
-                <button
-                  type="button"
-                  disabled={!isPoketoOnline}
-                  onClick={() => isPoketoOnline && setSelectedGateway('poketo')}
-                  className={`p-2.5 rounded-xl border text-left transition text-xs flex items-center justify-between ${
-                    selectedGateway === 'poketo' && isPoketoOnline
-                      ? 'border-emerald-500 bg-emerald-500/15 text-foreground ring-1 ring-emerald-500'
-                      : !isPoketoOnline
-                      ? 'border-border/40 bg-muted/20 opacity-50 cursor-not-allowed'
-                      : 'border-border/70 bg-card/40 hover:border-emerald-500/40 text-muted-foreground'
-                  }`}
-                >
-                  <div>
-                    <div className="font-semibold text-foreground">Payment 3: Poketo.id</div>
-                    <div className="text-[10px] text-muted-foreground">QRIS, VA Bank &amp; PayLater</div>
+                <div className="space-y-1.5">
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => {
+                      if (isPoketoOnline) {
+                        setSelectedGateway('poketo');
+                      } else {
+                        toast({
+                          title: 'Minimal Pembelian Rp 10.000',
+                          description: `Jalur 3 (Virtual Account & Kartu) hanya aktif untuk pembelian minimal Rp 10.000. Total order: ${formatRupiah(currentPrice)}.`,
+                          variant: 'destructive',
+                        });
+                      }
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        if (isPoketoOnline) setSelectedGateway('poketo');
+                      }
+                    }}
+                    className={`w-full p-2.5 rounded-xl border text-left transition text-xs space-y-1.5 cursor-pointer select-none ${
+                      selectedGateway === 'poketo' && isPoketoOnline
+                        ? 'border-emerald-500 bg-emerald-500/15 text-foreground ring-1 ring-emerald-500'
+                        : !isPoketoOnline
+                        ? 'border-border/40 bg-muted/20 opacity-50 cursor-not-allowed'
+                        : 'border-border/70 bg-card/40 hover:border-emerald-500/40 text-muted-foreground'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="font-semibold text-foreground">Jalur 3: Virtual Account, PayLater &amp; Kartu</div>
+                        <div className="text-[10px] text-muted-foreground">10 Bank Nasional, Akulaku &amp; Kartu Kredit/Debit</div>
+                      </div>
+                      <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${
+                        isPoketoOnline ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-amber-300'
+                      }`}>
+                        {isPoketoOnline ? 'Online' : 'Min. Rp 10rb'}
+                      </span>
+                    </div>
+                    <div className="pt-0.5 flex flex-wrap items-center gap-1.5">
+                      <PopularBankLogos limit={4} />
+                      <CardAndPaylaterBadges />
+                    </div>
                   </div>
-                  <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${
-                    isPoketoOnline ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-amber-300'
-                  }`}>
-                    {isPoketoOnline ? 'Online' : 'Min. 10rb'}
-                  </span>
-                </button>
+
+                  {selectedGateway === 'poketo' && isPoketoOnline && (
+                    <div className="p-2.5 bg-background/50 rounded-xl border border-emerald-500/20 space-y-2 text-xs">
+                      <div className="text-[11px] font-semibold text-emerald-400 uppercase tracking-wider">
+                        Pilih Saluran Pembayaran Jalur 3:
+                      </div>
+                      <div className="grid grid-cols-4 gap-1">
+                        <button
+                          type="button"
+                          onClick={() => setPoketoChannel('QRIS')}
+                          className={`py-1.5 text-[11px] rounded-lg border text-center font-medium transition flex flex-col items-center justify-center gap-0.5 ${
+                            poketoChannel === 'QRIS'
+                              ? 'bg-emerald-500 text-black border-emerald-400 font-bold'
+                              : 'bg-muted/30 border-border/60 text-muted-foreground hover:text-foreground'
+                          }`}
+                        >
+                          <QrisLogo size="xs" />
+                          <span>QRIS</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setPoketoChannel('VA')}
+                          className={`py-1.5 text-[11px] rounded-lg border text-center font-medium transition flex flex-col items-center justify-center gap-0.5 ${
+                            poketoChannel === 'VA'
+                              ? 'bg-emerald-500 text-black border-emerald-400 font-bold'
+                              : 'bg-muted/30 border-border/60 text-muted-foreground hover:text-foreground'
+                          }`}
+                        >
+                          <BankLogo bank="BRI" size="xs" />
+                          <span>VA Bank</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setPoketoChannel('AKULAKU')}
+                          className={`py-1.5 text-[11px] rounded-lg border text-center font-medium transition flex flex-col items-center justify-center gap-0.5 ${
+                            poketoChannel === 'AKULAKU'
+                              ? 'bg-emerald-500 text-black border-emerald-400 font-bold'
+                              : 'bg-muted/30 border-border/60 text-muted-foreground hover:text-foreground'
+                          }`}
+                        >
+                          <AkulakuLogo size="xs" />
+                          <span>PayLater</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setPoketoChannel('CARD')}
+                          className={`py-1.5 text-[11px] rounded-lg border text-center font-medium transition flex flex-col items-center justify-center gap-0.5 ${
+                            poketoChannel === 'CARD'
+                              ? 'bg-emerald-500 text-black border-emerald-400 font-bold'
+                              : 'bg-muted/30 border-border/60 text-muted-foreground hover:text-foreground'
+                          }`}
+                        >
+                          <div className="flex items-center gap-0.5">
+                            <VisaLogo size="xs" />
+                            <MastercardLogo size="xs" />
+                          </div>
+                          <span>Kartu</span>
+                        </button>
+                      </div>
+
+                      {poketoChannel === 'VA' && (
+                        <div className="pt-2 border-t border-border/40 space-y-1.5">
+                          <div className="text-[11px] font-semibold text-foreground flex items-center justify-between">
+                            <span className="flex items-center gap-1">
+                              <Building2 className="w-3 h-3 text-emerald-400" /> Pilih Bank Virtual Account:
+                            </span>
+                            <span className="text-[9px] text-emerald-400 font-mono">10 Bank</span>
+                          </div>
+                          <div className="grid grid-cols-2 sm:grid-cols-5 gap-1">
+                            {[
+                              { code: 'BRI', label: 'BRI' },
+                              { code: 'BNI', label: 'BNI' },
+                              { code: 'PERMATA', label: 'Permata' },
+                              { code: 'CIMB', label: 'CIMB' },
+                              { code: 'DANAMON', label: 'Danamon' },
+                              { code: 'BTN', label: 'BTN' },
+                              { code: 'MAYBANK', label: 'Maybank' },
+                              { code: 'BJB', label: 'bjb' },
+                              { code: 'SINARMAS', label: 'Sinarmas' },
+                              { code: 'BNC', label: 'BNC Neo' },
+                            ].map((b) => (
+                              <button
+                                key={b.code}
+                                type="button"
+                                onClick={() => setPoketoBank(b.code)}
+                                className={`p-1.5 text-[10px] font-bold rounded-lg border transition flex items-center justify-center gap-1 ${
+                                  poketoBank === b.code
+                                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-400 shadow-sm ring-1 ring-emerald-400/50'
+                                    : 'bg-muted/20 border-border/50 text-muted-foreground hover:text-foreground hover:border-emerald-500/40'
+                                }`}
+                              >
+                                <BankLogo bank={b.code} size="xs" />
+                                <span>{b.label}</span>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {poketoChannel === 'AKULAKU' && (
+                        <div className="text-[11px] text-muted-foreground bg-background/50 p-2 rounded-lg border border-emerald-500/20 flex items-center gap-2">
+                          <AkulakuLogo size="xs" />
+                          <span>Cicilan / PayLater instan via Akulaku. Halaman checkout dibuka otomatis.</span>
+                        </div>
+                      )}
+
+                      {poketoChannel === 'CARD' && (
+                        <div className="text-[11px] text-muted-foreground bg-background/50 p-2 rounded-lg border border-emerald-500/20 flex items-center gap-2">
+                          <VisaLogo size="xs" />
+                          <MastercardLogo size="xs" />
+                          <JcbLogo size="xs" />
+                          <span>Kartu Kredit &amp; Debit dengan 3D Secure OTP Bank.</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           </div>

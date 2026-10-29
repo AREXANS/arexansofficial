@@ -2,7 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import {
   corsHeaders, jsonHeaders, loadPaymentConfig, PAID_STATUSES,
-  arexansCheckStatus, clearGatewayTxId, getGatewayTxId, xmpaymentCheckStatus, pakasirIsPaid,
+  arexansCheckStatus, clearGatewayTxId, getGatewayTxId, xmpaymentCheckStatus, pakasirIsPaid, poketoCheckStatus,
 } from "../_shared/payment.ts";
 
 serve(async (req) => {
@@ -33,8 +33,21 @@ serve(async (req) => {
     let isPaid = false;
     let cancelled = false;
 
-    // 1. Check XMPayment first (by order_id / transactionId)
-    if (cfg.xmpayment.configured) {
+    // 0. Check Poketo (by stored slug or transactionId)
+    const { data: poketoSetting } = await supabase
+      .from("app_settings").select("value").eq("key", `poketo_tx_${transactionId}`).maybeSingle();
+    const poketoSlug = poketoSetting?.value || "";
+    if (poketoSlug) {
+      const pktRes = await poketoCheckStatus(cfg, poketoSlug);
+      if (pktRes.isPaid) {
+        isPaid = true;
+      } else if (pktRes.status === "cancelled" || pktRes.status === "cancel" || pktRes.status === "refunded") {
+        cancelled = true;
+      }
+    }
+
+    // 1. Check XMPayment (by order_id / transactionId)
+    if (!isPaid && cfg.xmpayment.configured) {
       const xmpRes = await xmpaymentCheckStatus(cfg, transactionId);
       if (xmpRes.isPaid) {
         isPaid = true;

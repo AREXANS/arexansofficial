@@ -432,6 +432,7 @@ export default defineConfig(({ mode }) => ({
     port: 3000,
     strictPort: true,
     hmr: false,
+    cors: true,
     proxy: {
       '/casaku-proxy': {
         target: 'https://api.casaku.id',

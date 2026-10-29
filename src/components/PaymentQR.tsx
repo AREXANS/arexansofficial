@@ -11,6 +11,15 @@ import {
 import GlobalBackground from './GlobalBackground';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from '@/hooks/use-toast';
+import {
+  BankLogo,
+  VisaLogo,
+  MastercardLogo,
+  JcbLogo,
+  AkulakuLogo,
+  QrisLogo,
+  EWalletBadges
+} from './PaymentLogos';
 
 interface SocialLink {
   id: string;
@@ -33,8 +42,13 @@ interface PaymentQRProps {
     gateway?: string;
     isPoketo?: boolean;
     slug?: string;
+    selectedChannel?: string;
+    selectedBank?: string;
     vaBanks?: Array<{ code: string; name: string }>;
     quotes?: any;
+    vaData?: any;
+    akulakuData?: any;
+    cardData?: any;
     expiresAt: string;
     productId?: string;
   };
@@ -97,9 +111,18 @@ const PaymentQR: FC<PaymentQRProps> = ({
   formatRupiah
 }) => {
   const isPoketo = paymentData.gateway === 'poketo' || (Boolean(paymentData.isPoketo) && paymentData.gateway !== 'arexanspay' && paymentData.gateway !== 'xmpayment');
-  const slug = paymentData.slug || (paymentData.payment_url ? paymentData.payment_url.split('/inv/')[1] : '');
+  const rawSlug = paymentData.slug || (paymentData.payment_url ? paymentData.payment_url.split('/inv/')[1] : '');
+  const slug = rawSlug ? (rawSlug.includes('/inv/') ? rawSlug.split('/inv/')[1].split(/[?#]/)[0] : rawSlug.split(/[?#]/)[0]) : '';
 
-  const [activeTab, setActiveTab] = useState<PaymentTab>('qris');
+  const resolveInitialTab = (): PaymentTab => {
+    const ch = (paymentData.selectedChannel || '').toUpperCase();
+    if (ch === 'VA') return 'va';
+    if (ch === 'AKULAKU') return 'paylater';
+    if (ch === 'CARD') return 'card';
+    return 'qris';
+  };
+
+  const [activeTab, setActiveTab] = useState<PaymentTab>(resolveInitialTab());
   const [showContactHint, setShowContactHint] = useState(false);
   const [contactLink, setContactLink] = useState<SocialLink | null>(null);
   const [rechecking, setRechecking] = useState(false);
@@ -109,15 +132,15 @@ const PaymentQR: FC<PaymentQRProps> = ({
   const [copiedPaylaterUrl, setCopiedPaylaterUrl] = useState(false);
 
   // VA State
-  const [selectedBank, setSelectedBank] = useState<string>('BRI');
+  const [selectedBank, setSelectedBank] = useState<string>(paymentData.selectedBank || 'BRI');
   const [vaLoading, setVaLoading] = useState(false);
-  const [vaData, setVaData] = useState<VaPaymentInfo | null>(null);
+  const [vaData, setVaData] = useState<VaPaymentInfo | null>(paymentData.vaData || null);
   const [activeInstructionChannel, setActiveInstructionChannel] = useState<string>('');
   const [expandedInstructions, setExpandedInstructions] = useState(false);
 
   // PayLater (Akulaku) State
   const [akulakuLoading, setAkulakuLoading] = useState(false);
-  const [akulakuData, setAkulakuData] = useState<AkulakuPaymentInfo | null>(null);
+  const [akulakuData, setAkulakuData] = useState<AkulakuPaymentInfo | null>(paymentData.akulakuData || null);
   const [akulakuPayer, setAkulakuPayer] = useState({
     name: paymentData.transactionId.startsWith('AXS-') ? paymentData.transactionId : 'Pembeli Arexans',
     phone: '08123456789',
@@ -129,7 +152,13 @@ const PaymentQR: FC<PaymentQRProps> = ({
 
   // Card State
   const [cardLoading, setCardLoading] = useState(false);
-  const [cardData, setCardData] = useState<CardPaymentInfo | null>(null);
+  const [cardData, setCardData] = useState<CardPaymentInfo | null>(paymentData.cardData || null);
+
+  useEffect(() => {
+    if (vaData?.instructions?.id?.length) {
+      setActiveInstructionChannel(vaData.instructions.id[0].channel);
+    }
+  }, [vaData]);
 
   // Calculate current active amount
   const getTabAmount = () => {
@@ -151,7 +180,7 @@ const PaymentQR: FC<PaymentQRProps> = ({
     setVaLoading(true);
     try {
       const res = await supabase.functions.invoke('poketo-pay', {
-        body: { slug, channel: 'VA', bank: bankCode }
+        body: { slug, channel: 'VA', bank: bankCode, transactionId: paymentData.transactionId }
       });
 
       if (res?.data?.success && res.data.payment) {
@@ -174,12 +203,12 @@ const PaymentQR: FC<PaymentQRProps> = ({
     }
   };
 
-  // Auto-fetch VA on switching to VA tab
+  // Auto-fetch VA on switching to VA tab if not loaded yet
   useEffect(() => {
-    if (activeTab === 'va' && !vaData && isPoketo) {
-      handleSelectBank('BRI');
+    if (activeTab === 'va' && !vaData && isPoketo && slug) {
+      handleSelectBank(selectedBank || 'BRI');
     }
-  }, [activeTab, isPoketo]);
+  }, [activeTab, isPoketo, slug]);
 
   // 2. Fetch PayLater Akulaku Handler
   const handleInitAkulaku = async (e?: React.FormEvent) => {
@@ -395,12 +424,18 @@ const PaymentQR: FC<PaymentQRProps> = ({
         </div>
 
         <h2 className="text-xl sm:text-2xl font-display font-bold text-foreground">
-          {isPoketo ? 'Pembayaran Realtime Poketo' : 'Scan QRIS untuk Membayar'}
+          {activeTab === 'va' 
+            ? 'Pembayaran Virtual Account Bank' 
+            : activeTab === 'paylater' 
+            ? 'Pembayaran PayLater Akulaku' 
+            : activeTab === 'card' 
+            ? 'Pembayaran Kartu Kredit / Debit' 
+            : 'Scan QRIS untuk Membayar'}
         </h2>
         <p className="text-muted-foreground text-xs sm:text-sm mt-1 mb-4">
           {isPoketo 
-            ? 'Tersedia QRIS, Virtual Account Bank, PayLater Akulaku, dan Kartu Debit/Kredit'
-            : 'Gateway ArexansPay & XMPayment · Scan instan semua e-wallet & mobile banking'}
+            ? 'Virtual Account 10 Bank, QRIS Instan, Cicilan Akulaku & Kartu Debit/Kredit'
+            : 'Verifikasi instan realtime · Scan via semua e-wallet & mobile banking'}
         </p>
 
         {errorMsg && (
@@ -482,7 +517,7 @@ const PaymentQR: FC<PaymentQRProps> = ({
               </button>
             </div>
 
-            {/* Official Poketo Link Button */}
+            {/* Link Button */}
             {officialPoketoUrl && (
               <a
                 href={officialPoketoUrl}
@@ -491,7 +526,7 @@ const PaymentQR: FC<PaymentQRProps> = ({
                 className="w-full inline-flex items-center justify-center gap-1.5 py-1.5 px-3 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 text-xs font-medium transition"
               >
                 <ExternalLink className="w-3.5 h-3.5" />
-                <span>Buka Halaman Resmi Pembayaran (pay.poketo.id)</span>
+                <span>Buka Portal Pembayaran Mandiri di Tab Baru</span>
               </a>
             )}
           </div>
@@ -513,15 +548,15 @@ const PaymentQR: FC<PaymentQRProps> = ({
             </div>
 
             {/* Supported e-wallets badges */}
-            <div className="flex flex-wrap items-center justify-center gap-1.5 text-[10px] text-muted-foreground">
-              <span className="px-2 py-0.5 rounded bg-muted/80 font-medium">BCA</span>
-              <span className="px-2 py-0.5 rounded bg-muted/80 font-medium">Mandiri</span>
-              <span className="px-2 py-0.5 rounded bg-muted/80 font-medium">BRI</span>
-              <span className="px-2 py-0.5 rounded bg-muted/80 font-medium">BNI</span>
-              <span className="px-2 py-0.5 rounded bg-muted/80 font-medium">Dana</span>
-              <span className="px-2 py-0.5 rounded bg-muted/80 font-medium">GoPay</span>
-              <span className="px-2 py-0.5 rounded bg-muted/80 font-medium">OVO</span>
-              <span className="px-2 py-0.5 rounded bg-muted/80 font-medium">ShopeePay</span>
+            <div className="flex flex-col items-center justify-center gap-2">
+              <EWalletBadges />
+              <div className="flex flex-wrap items-center justify-center gap-1">
+                <BankLogo bank="BCA" size="xs" />
+                <BankLogo bank="MANDIRI" size="xs" />
+                <BankLogo bank="BRI" size="xs" />
+                <BankLogo bank="BNI" size="xs" />
+                <span className="text-[10px] text-muted-foreground ml-1">&amp; semua m-Banking</span>
+              </div>
             </div>
 
             <p className="text-xs text-muted-foreground">
@@ -568,14 +603,17 @@ const PaymentQR: FC<PaymentQRProps> = ({
                     key={b.code}
                     type="button"
                     onClick={() => handleSelectBank(b.code)}
-                    className={`p-2 rounded-lg text-xs font-semibold border transition-all text-left flex items-center justify-between ${
+                    className={`p-2 rounded-lg text-xs font-semibold border transition-all text-left flex items-center justify-between gap-1.5 ${
                       selectedBank === b.code
-                        ? 'border-primary bg-primary/15 text-primary ring-1 ring-primary'
+                        ? 'border-emerald-500 bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500 shadow-sm'
                         : 'border-border/60 bg-muted/30 text-muted-foreground hover:bg-muted/50 hover:text-foreground'
                     }`}
                   >
-                    <span className="truncate">{b.name}</span>
-                    {selectedBank === b.code && <CheckCircle2 className="w-3 h-3 shrink-0 text-primary" />}
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <BankLogo bank={b.code} size="xs" />
+                      <span className="truncate text-[11px] font-semibold">{b.name}</span>
+                    </div>
+                    {selectedBank === b.code && <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-emerald-400" />}
                   </button>
                 ))}
               </div>
@@ -590,9 +628,11 @@ const PaymentQR: FC<PaymentQRProps> = ({
             ) : vaData ? (
               <div className="space-y-3 pt-2">
                 <div className="p-4 rounded-xl bg-gradient-to-br from-primary/10 via-primary/5 to-transparent border border-primary/30">
-                  <div className="flex items-center justify-between text-xs text-muted-foreground mb-1">
-                    <span>Nomor Virtual Account {vaData.bankName || vaData.bank}:</span>
-                    <span className="text-[10px] bg-emerald-500/10 text-emerald-400 font-bold px-2 py-0.5 rounded">Aktif</span>
+                  <div className="flex items-center justify-between text-xs mb-2 pb-2 border-b border-white/5">
+                    <BankLogo bank={vaData.bank} size="md" showName={true} />
+                    <span className="text-[10px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-bold px-2 py-0.5 rounded-full">
+                      VA Aktif Realtime
+                    </span>
                   </div>
                   <div className="flex items-center justify-between gap-2 mt-2">
                     <code className="text-lg sm:text-xl font-mono font-bold tracking-wider text-foreground select-all break-all">
@@ -667,8 +707,8 @@ const PaymentQR: FC<PaymentQRProps> = ({
           <div className="space-y-4 text-left animate-fade-in p-4 rounded-xl bg-card/60 border border-border/60">
             <div className="flex items-center justify-between border-b border-border/50 pb-2">
               <div className="flex items-center gap-2 text-foreground font-semibold text-sm">
-                <Zap className="w-4 h-4 text-amber-400" />
-                <span>Akulaku PayLater & Cicilan</span>
+                <AkulakuLogo size="sm" />
+                <span>Akulaku PayLater & Cicilan Instan</span>
               </div>
               <span className="text-[10px] text-emerald-400 font-bold bg-emerald-500/10 px-2 py-0.5 rounded">
                 Realtime
@@ -840,11 +880,11 @@ const PaymentQR: FC<PaymentQRProps> = ({
               Mendukung kartu debit dan kredit dengan logo <strong>Visa, Mastercard, JCB, atau GPN</strong>. Terproteksi OTP resmi dari bank penerbit.
             </p>
 
-            <div className="flex flex-wrap items-center gap-2 text-xs">
-              <span className="px-2.5 py-1 rounded bg-muted/80 font-mono font-bold text-foreground">VISA</span>
-              <span className="px-2.5 py-1 rounded bg-muted/80 font-mono font-bold text-foreground">Mastercard</span>
-              <span className="px-2.5 py-1 rounded bg-muted/80 font-mono font-bold text-foreground">JCB</span>
-              <span className="px-2.5 py-1 rounded bg-muted/80 font-mono font-bold text-foreground">GPN</span>
+            <div className="flex flex-wrap items-center gap-2">
+              <VisaLogo size="md" />
+              <MastercardLogo size="md" />
+              <JcbLogo size="md" />
+              <span className="px-2 py-0.5 rounded bg-muted/80 font-bold text-[10px] text-muted-foreground select-none">GPN</span>
             </div>
 
             {/* Generated Card Payment URL Box */}
