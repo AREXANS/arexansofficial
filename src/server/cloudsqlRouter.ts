@@ -385,10 +385,12 @@ export async function handleFunctionsRequest(req: any, res: any): Promise<boolea
   const urlStr = req.url || '';
   const pathname = urlStr.split('?')[0] || '';
 
-  const match = pathname.match(/^\/(?:functions\/v1|api)\/([a-zA-Z0-9_\-]+)/);
-  if (!match) return false;
+  // Support both single /api/func and nested /api/device/heartbeat or /functions/v1/device-heartbeat
+  const subMatch = pathname.match(/^\/(?:functions\/v1|api)\/(.+)$/);
+  if (!subMatch) return false;
 
-  const funcName = match[1];
+  const rawSubPath = subMatch[1].split('?')[0].replace(/\/+$/, '');
+  const funcName = rawSubPath.replace(/\//g, '-');
   const pool = createPool();
   const searchParams = new URL(urlStr, 'http://localhost').searchParams;
   const method = req.method?.toUpperCase();
@@ -472,6 +474,122 @@ export async function handleFunctionsRequest(req: any, res: any): Promise<boolea
 
   try {
     const body = JSON.parse(bodyStr || '{}');
+
+      // ==========================================
+      // HEARTBEAT / PRESENCE PERANGKAT AREXANSPAY APK
+      // ==========================================
+      if (
+        funcName === 'device-heartbeat' || 
+        funcName === 'heartbeat' || 
+        funcName === 'device-ping' || 
+        funcName === 'ping'
+      ) {
+        const clientIp = (req.headers['x-forwarded-for']?.split(',')[0]?.trim()) || req.socket?.remoteAddress || '127.0.0.1';
+        const now = Date.now();
+        const actionStatus = String(body.status || searchParams.get('status') || 'online').toLowerCase();
+
+        if (actionStatus === 'offline') {
+          // Sinyal offline manual / disconnect
+          await pool.query(
+            "INSERT INTO app_settings (id, key, value, updated_at) VALUES ('developer_last_seen', 'developer_last_seen', '0', now()) ON CONFLICT (key) DO UPDATE SET value = '0', updated_at = now()"
+          );
+          await pool.query(
+            "INSERT INTO app_settings (id, key, value, updated_at) VALUES ('developer_device_online', 'developer_device_online', 'false', now()) ON CONFLICT (key) DO UPDATE SET value = 'false', updated_at = now()"
+          );
+
+          res.setHeader('Content-Type', 'application/json');
+          return res.end(JSON.stringify({
+            success: true,
+            status: 'offline',
+            online: false,
+            message: 'Status perangkat telah diset OFFLINE. Jalur 1 ArexansPay dinonaktifkan di web.',
+            timestamp: now,
+          }));
+        }
+
+        const deviceId = body.device_id || body.deviceId || searchParams.get('device_id') || 'arexans-phone';
+        const deviceName = body.device_name || body.deviceName || body.device || body.model || searchParams.get('device_name') || 'HP Owner (ArexansPay APK)';
+        const battery = body.battery ?? body.battery_level ?? (searchParams.get('battery') ? parseInt(searchParams.get('battery')!, 10) : null);
+        const network = body.network ?? body.network_type ?? searchParams.get('network') ?? 'ONLINE';
+
+        const deviceInfo = {
+          device_id: deviceId,
+          device_name: deviceName,
+          battery,
+          network,
+          ip: clientIp,
+          status: 'online',
+          last_ping: new Date().toISOString(),
+          last_seen: now,
+        };
+
+        // 1. Simpan developer_last_seen timestamp
+        await pool.query(
+          "INSERT INTO app_settings (id, key, value, updated_at) VALUES ('developer_last_seen', 'developer_last_seen', $1, now()) ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = now()",
+          [now.toString()]
+        );
+
+        // 2. Simpan arexanspay_device_info JSON
+        await pool.query(
+          "INSERT INTO app_settings (id, key, value, updated_at) VALUES ('arexanspay_device_info', 'arexanspay_device_info', $1, now()) ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = now()",
+          [JSON.stringify(deviceInfo)]
+        );
+
+        // 3. Simpan developer_device_online flag
+        await pool.query(
+          "INSERT INTO app_settings (id, key, value, updated_at) VALUES ('developer_device_online', 'developer_device_online', 'true', now()) ON CONFLICT (key) DO UPDATE SET value = 'true', updated_at = now()"
+        );
+
+        res.setHeader('Content-Type', 'application/json');
+        return res.end(JSON.stringify({
+          success: true,
+          status: 'online',
+          online: true,
+          message: 'Sinyal heartbeat ArexansPay APK berhasil diterima! Perangkat terdeteksi ONLINE di web.',
+          timestamp: now,
+          server_time: new Date().toISOString(),
+          timeout_threshold_seconds: 60,
+          device: deviceInfo,
+        }));
+      }
+
+      // ==========================================
+      // CHECK DEVICE STATUS / PRESENCE (GET / POST)
+      // ==========================================
+      if (
+        funcName === 'device-status' || 
+        funcName === 'device-presence'
+      ) {
+        const settingsRes = await pool.query(
+          "SELECT key, value FROM app_settings WHERE key IN ('developer_last_seen', 'arexanspay_device_info', 'developer_device_online')"
+        );
+        const map: Record<string, string> = {};
+        (settingsRes.rows || []).forEach((r: any) => { map[r.key] = r.value; });
+
+        const lastSeen = parseInt(map.developer_last_seen || '0', 10);
+        const STALE_MS = 60 * 1000; // 60 detik tanpa sinyal = offline
+        const diffMs = Date.now() - lastSeen;
+        const isOnline = Boolean(lastSeen) && diffMs < STALE_MS;
+
+        let deviceInfo: any = null;
+        if (map.arexanspay_device_info) {
+          try { deviceInfo = JSON.parse(map.arexanspay_device_info); } catch {}
+        }
+
+        res.setHeader('Content-Type', 'application/json');
+        return res.end(JSON.stringify({
+          success: true,
+          online: isOnline,
+          developer_online: isOnline,
+          last_seen: lastSeen,
+          last_seen_seconds_ago: lastSeen ? Math.round(diffMs / 1000) : null,
+          timeout_threshold_seconds: 60,
+          device_info: deviceInfo || {
+            device_name: 'HP Owner (ArexansPay APK)',
+            status: isOnline ? 'online' : 'offline',
+          },
+        }));
+      }
 
       async function fulfillTransaction(tx: any) {
         if (!tx) return;

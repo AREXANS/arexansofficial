@@ -472,7 +472,43 @@ export const PaymentGatewaySettings: FC<PaymentGatewaySettingsProps> = ({ onSett
 
   // Check admin device heartbeat for ArexansPay (Payment 1)
   const devLastSeen = parseInt(getValue('developer_last_seen', '0'), 10);
-  const isDevPhoneOnline = !!devLastSeen && (Date.now() - devLastSeen < 3 * 60 * 1000);
+  const isDevPhoneOnline = !!devLastSeen && (Date.now() - devLastSeen < 60 * 1000);
+  const devSecondsAgo = devLastSeen ? Math.max(0, Math.round((Date.now() - devLastSeen) / 1000)) : null;
+
+  let devDeviceInfo: any = null;
+  try {
+    devDeviceInfo = JSON.parse(getValue('arexanspay_device_info', '{}'));
+  } catch {}
+
+  const [heartbeatSending, setHeartbeatSending] = useState(false);
+  const handleSendHeartbeat = async (status: 'online' | 'offline') => {
+    setHeartbeatSending(true);
+    try {
+      const res = await fetch('/api/device/heartbeat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          status,
+          device_id: 'owner-phone-test',
+          device_name: 'HP Owner (ArexansPay APK)',
+          network: 'WIFI',
+          battery: 95,
+        })
+      });
+      const data = await res.json();
+      if (data?.success) {
+        toast({
+          title: status === 'online' ? '🟢 Sinyal Online Terkirim' : '🔴 Sinyal Offline Terkirim',
+          description: data.message,
+        });
+        loadSettings();
+      }
+    } catch (e: any) {
+      toast({ title: 'Gagal kirim sinyal', description: e.message, variant: 'destructive' });
+    } finally {
+      setHeartbeatSending(false);
+    }
+  };
 
   const toggleGateway = async (gatewayId: 'arexanspay' | 'xmpayment' | 'poketo') => {
     let nextList: string[];
@@ -970,6 +1006,112 @@ export const PaymentGatewaySettings: FC<PaymentGatewaySettingsProps> = ({ onSett
         </CardHeader>
 
         <CardContent className="space-y-4">
+          {/* HEARTBEAT / PRESENCE HP OWNER AREXANSPAY APK */}
+          <div className="p-4 rounded-xl border border-cyan-500/30 bg-cyan-950/20 space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-cyan-500/20 pb-2.5">
+              <div className="flex items-center gap-2">
+                <Smartphone className="w-4 h-4 text-cyan-400" />
+                <span className="font-bold text-sm text-foreground">
+                  Status Sinyal Perangkat ArexansPay APK (HP Owner)
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className={`inline-flex items-center gap-1.5 text-xs px-3 py-1 rounded-full font-bold ${
+                  isDevPhoneOnline 
+                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40' 
+                    : 'bg-red-500/20 text-red-400 border border-red-500/40'
+                }`}>
+                  <span className={`w-2 h-2 rounded-full ${isDevPhoneOnline ? 'bg-emerald-400 animate-pulse' : 'bg-red-400'}`} />
+                  {isDevPhoneOnline ? 'ONLINE (Aktif Data/WiFi)' : 'OFFLINE (HP Terputus)'}
+                </span>
+                {devSecondsAgo !== null && isDevPhoneOnline && (
+                  <span className="text-[11px] text-muted-foreground font-mono">
+                    Ping: {devSecondsAgo}s lalu
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Device Info Summary */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
+              <div className="p-2 rounded-lg bg-background/50 border border-border/40">
+                <span className="text-muted-foreground block text-[10px]">Perangkat:</span>
+                <span className="font-semibold text-foreground truncate block">
+                  {devDeviceInfo?.device_name || 'Arexans Android Phone'}
+                </span>
+              </div>
+              <div className="p-2 rounded-lg bg-background/50 border border-border/40">
+                <span className="text-muted-foreground block text-[10px]">Koneksi:</span>
+                <span className="font-semibold text-cyan-400 block">
+                  {devDeviceInfo?.network || (isDevPhoneOnline ? 'Online' : 'Offline')}
+                </span>
+              </div>
+              <div className="p-2 rounded-lg bg-background/50 border border-border/40">
+                <span className="text-muted-foreground block text-[10px]">Baterai:</span>
+                <span className="font-semibold text-foreground block">
+                  {devDeviceInfo?.battery ? `${devDeviceInfo.battery}%` : 'N/A'}
+                </span>
+              </div>
+              <div className="p-2 rounded-lg bg-background/50 border border-border/40">
+                <span className="text-muted-foreground block text-[10px]">Alamat IP:</span>
+                <span className="font-mono text-foreground truncate block">
+                  {devDeviceInfo?.ip || '127.0.0.1'}
+                </span>
+              </div>
+            </div>
+
+            {/* URL Heartbeat untuk dipasang di APK */}
+            <div className="space-y-1.5 pt-1">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs font-semibold text-cyan-400 flex items-center gap-1.5">
+                  <Radio className="w-3.5 h-3.5" />
+                  URL Heartbeat / Ping (Pasang di APK ArexansPay)
+                </Label>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => copyToClipboard(`${currentOrigin}/api/device/heartbeat`, 'heartbeat_url')}
+                  className="h-7 px-2 text-xs text-cyan-400 hover:bg-cyan-500/10 gap-1"
+                >
+                  {copiedKey === 'heartbeat_url' ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                  {copiedKey === 'heartbeat_url' ? 'Tersalin' : 'Salin URL'}
+                </Button>
+              </div>
+              <div className="p-2 rounded bg-background/80 font-mono text-xs text-foreground break-all border border-cyan-500/30">
+                {`${currentOrigin}/api/device/heartbeat`}
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                Pasang URL ini pada pengaturan aplikasi Android ArexansPay Anda. APK akan mengirim ping otomatis setiap 15-30 detik saat HP terhubung ke internet/data.
+              </p>
+            </div>
+
+            {/* Quick Action Simulation Buttons */}
+            <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-cyan-500/20">
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => handleSendHeartbeat('online')}
+                disabled={heartbeatSending}
+                className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs h-8 gap-1.5 rounded-lg"
+              >
+                <Zap className="w-3.5 h-3.5" />
+                <span>Simulasi Ping Online (Nyalakan)</span>
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => handleSendHeartbeat('offline')}
+                disabled={heartbeatSending}
+                className="border-red-500/40 text-red-400 hover:bg-red-500/10 text-xs h-8 gap-1.5 rounded-lg"
+              >
+                <Radio className="w-3.5 h-3.5" />
+                <span>Simulasi Putus Jaringan (Set Offline)</span>
+              </Button>
+            </div>
+          </div>
+
           {/* License Key */}
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">

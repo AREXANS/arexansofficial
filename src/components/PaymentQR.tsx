@@ -408,35 +408,45 @@ const PaymentQR: FC<PaymentQRProps> = ({
   const officialPoketoUrl = paymentData.payment_url || (slug ? `https://pay.poketo.id/inv/${slug}` : undefined);
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-3 sm:p-4 bg-background relative overflow-hidden">
+    <div className="min-h-screen flex items-center justify-center p-3 sm:p-5 lg:p-8 bg-background relative overflow-hidden">
       <GlobalBackground />
 
-      <div className={`${roleCardClass} p-5 sm:p-7 max-w-lg w-full text-center z-10 relative my-6 rounded-2xl shadow-2xl border border-white/10`}>
-        {/* Header Badge */}
-        <div className="flex items-center justify-between gap-2 mb-3">
-          <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-bold ${roleTintClass} ${roleTextClass}`}>
-            <ShieldCheck className="w-3.5 h-3.5" />
-            {packageName === 'LIFETIME' ? 'ADMIN · LIFETIME' : `Paket ${packageName}`}
-          </span>
-          <span className="text-[11px] text-muted-foreground font-mono">
-            {paymentData.transactionId}
-          </span>
-        </div>
+      <div className={`${roleCardClass} p-5 sm:p-7 lg:p-9 max-w-lg md:max-w-3xl lg:max-w-5xl xl:max-w-6xl w-full z-10 relative my-6 rounded-2xl shadow-2xl border border-white/10`}>
+        {/* Header Bar */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-5 pb-4 border-b border-white/10">
+          <div>
+            <div className="flex items-center gap-2 mb-1">
+              <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-bold ${roleTintClass} ${roleTextClass}`}>
+                <ShieldCheck className="w-3.5 h-3.5" />
+                {packageName === 'LIFETIME' ? 'ADMIN · LIFETIME' : `Paket ${packageName}`}
+              </span>
+              <span className="text-[11px] text-muted-foreground font-mono">
+                {paymentData.transactionId}
+              </span>
+            </div>
+            <h2 className="text-xl sm:text-2xl font-display font-bold text-foreground">
+              {activeTab === 'va' 
+                ? 'Pembayaran Virtual Account Bank' 
+                : activeTab === 'paylater' 
+                ? 'Pembayaran PayLater Akulaku' 
+                : activeTab === 'card' 
+                ? 'Pembayaran Kartu Kredit / Debit' 
+                : 'Scan QRIS untuk Membayar'}
+            </h2>
+            <p className="text-muted-foreground text-xs sm:text-sm mt-0.5">
+              {isPoketo 
+                ? 'Virtual Account 10 Bank, QRIS Instan, Cicilan Akulaku & Kartu Debit/Kredit'
+                : 'Verifikasi instan realtime · Scan via semua e-wallet & mobile banking'}
+            </p>
+          </div>
 
-        <h2 className="text-xl sm:text-2xl font-display font-bold text-foreground">
-          {activeTab === 'va' 
-            ? 'Pembayaran Virtual Account Bank' 
-            : activeTab === 'paylater' 
-            ? 'Pembayaran PayLater Akulaku' 
-            : activeTab === 'card' 
-            ? 'Pembayaran Kartu Kredit / Debit' 
-            : 'Scan QRIS untuk Membayar'}
-        </h2>
-        <p className="text-muted-foreground text-xs sm:text-sm mt-1 mb-4">
-          {isPoketo 
-            ? 'Virtual Account 10 Bank, QRIS Instan, Cicilan Akulaku & Kartu Debit/Kredit'
-            : 'Verifikasi instan realtime · Scan via semua e-wallet & mobile banking'}
-        </p>
+          <div className="flex items-center gap-2 self-start sm:self-auto">
+            <span className="text-[11px] text-emerald-400 font-mono bg-emerald-500/10 border border-emerald-500/25 px-2.5 py-1 rounded-lg flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+              Auto-Polling Aktif
+            </span>
+          </div>
+        </div>
 
         {errorMsg && (
           <div className="bg-destructive/10 border border-destructive/50 text-destructive p-3.5 rounded-xl mb-4 text-xs sm:text-sm">
@@ -444,24 +454,116 @@ const PaymentQR: FC<PaymentQRProps> = ({
           </div>
         )}
 
-        {/* Amount Box */}
-        <div className={`p-4 rounded-xl mb-4 border ${roleTintClass} bg-card/60`}>
-          <div className="flex items-center justify-between mb-1">
-            <span className="text-muted-foreground text-xs uppercase tracking-wider font-medium">Total Tagihan Pembayaran</span>
-            {isPoketo && (
-              <span className="text-[10px] px-2 py-0.5 rounded bg-primary/20 text-primary font-bold">
-                {activeTab === 'qris' ? 'QRIS' : activeTab === 'va' ? 'VA Bank' : activeTab === 'paylater' ? 'Akulaku' : 'Kartu 3DS'}
-              </span>
+        <div className="lg:grid lg:grid-cols-12 lg:gap-8 items-start">
+          {/* LEFT COLUMN: TOTAL TAGIHAN, STATUS & DETAIL */}
+          <div className="lg:col-span-5 space-y-4 mb-6 lg:mb-0">
+            {/* Amount Box */}
+            <div className={`p-4 rounded-xl border ${roleTintClass} bg-card/60`}>
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-muted-foreground text-xs uppercase tracking-wider font-medium">Total Tagihan Pembayaran</span>
+                {isPoketo && (
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-primary/20 text-primary font-bold">
+                    {activeTab === 'qris' ? 'QRIS' : activeTab === 'va' ? 'VA Bank' : activeTab === 'paylater' ? 'Akulaku' : 'Kartu 3DS'}
+                  </span>
+                )}
+              </div>
+              <p className={`text-2xl sm:text-3xl font-display font-bold ${roleTextClass}`}>
+                {formatRupiah(getTabAmount())}
+              </p>
+              <div className="flex items-center gap-2 mt-1.5 text-[11px] text-muted-foreground">
+                <span className="inline-block w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                <span>Verifikasi Otomatis Realtime · Tanpa Kirim Bukti</span>
+              </div>
+            </div>
+
+            {/* Live Status indicator */}
+            {statusMsg && (
+              <div className={`flex items-center gap-2 p-3 rounded-xl bg-card/60 border border-border/60 text-xs sm:text-sm ${roleTextClass}`}>
+                <div className={`w-2.5 h-2.5 rounded-full animate-pulse shrink-0 ${packageName === 'LIFETIME' ? 'bg-cyan-glow' : packageName === 'VIP' ? 'bg-purple-glow' : 'bg-success'}`} />
+                <span className="font-semibold">{statusMsg}</span>
+              </div>
             )}
+
+            {/* Manual recheck button */}
+            {onRecheck && (
+              <div>
+                <Button
+                  type="button"
+                  onClick={handleRecheck}
+                  disabled={rechecking}
+                  className={`w-full ${roleTintClass} ${roleTextClass}`}
+                  variant="outline"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 mr-2 ${rechecking ? 'animate-spin' : ''}`} />
+                  {rechecking ? 'Mengecek pembayaran...' : 'Saya Sudah Bayar, Cek Sekarang'}
+                </Button>
+                {recheckMsg && (
+                  <p className="text-xs text-success mt-1.5">{recheckMsg}</p>
+                )}
+              </div>
+            )}
+
+            {/* Contact Admin Hint */}
+            {showContactHint && contactLink && (
+              <div className="bg-primary/10 border border-primary/30 p-3 rounded-xl text-left">
+                <div className="flex items-start gap-2.5">
+                  <AlertCircle className="w-4 h-4 text-primary shrink-0 mt-0.5" />
+                  <div className="text-xs">
+                    <p className="text-foreground font-semibold">Sudah transfer tapi belum terverifikasi?</p>
+                    <p className="text-muted-foreground mt-0.5 mb-2">Hubungi admin dengan membawa nomor transaksi ini.</p>
+                    <a
+                      href={contactLink.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 bg-success/20 hover:bg-success/30 text-success px-3 py-1.5 rounded-lg text-xs font-medium transition-colors"
+                    >
+                      <MessageCircle className="w-3.5 h-3.5" />
+                      Hubungi WhatsApp Admin
+                    </a>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Petunjuk Singkat */}
+            <div className="p-3.5 rounded-xl bg-muted/20 border border-border/50 text-[11px] space-y-1.5 hidden lg:block text-muted-foreground">
+              <div className="font-semibold text-foreground flex items-center gap-1.5">
+                <ShieldCheck className="w-3.5 h-3.5 text-primary" /> Panduan Pembayaran:
+              </div>
+              <ul className="space-y-1 list-disc list-inside">
+                <li>Selesaikan pembayaran sesuai nominal yang tertera.</li>
+                <li>Setelah berhasil, sistem langsung mengaktifkan lisensi Anda.</li>
+                <li>Halaman ini akan otomatis beralih ke rincian Key Anda.</li>
+              </ul>
+            </div>
+
+            {/* Transaction Info Footer */}
+            <div className="bg-muted/30 p-2.5 rounded-lg flex items-center justify-between text-xs">
+              <span className="text-muted-foreground text-[11px]">ID Transaksi:</span>
+              <div className="flex items-center gap-1.5">
+                <code className="font-mono text-foreground font-medium text-[11px]">{paymentData.transactionId}</code>
+                <button
+                  onClick={() => onCopy(paymentData.transactionId)}
+                  className="p-1 rounded bg-primary/10 hover:bg-primary/20 text-primary transition-all"
+                  title="Salin ID"
+                >
+                  <Copy className="w-3 h-3" />
+                </button>
+              </div>
+            </div>
+
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onCancel}
+              className="w-full text-xs text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+            >
+              Batalkan Transaksi
+            </Button>
           </div>
-          <p className={`text-2xl sm:text-3xl font-display font-bold ${roleTextClass}`}>
-            {formatRupiah(getTabAmount())}
-          </p>
-          <div className="flex items-center justify-center gap-2 mt-1.5 text-[11px] text-muted-foreground">
-            <span className="inline-block w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-            <span>Verifikasi Otomatis Realtime · Tanpa Kirim Bukti</span>
-          </div>
-        </div>
+
+          {/* RIGHT COLUMN: METODE PEMBAYARAN & DISPLAY */}
+          <div className="lg:col-span-7 space-y-4 text-center">
 
         {/* Multi-Method Tabs ONLY for Poketo (>= Rp 10.000) */}
         {isPoketo ? (
@@ -932,79 +1034,7 @@ const PaymentQR: FC<PaymentQRProps> = ({
           </div>
         )}
 
-        {/* Live Status indicator */}
-        <div className="mt-5 pt-4 border-t border-white/10">
-          {statusMsg && (
-            <div className={`flex items-center justify-center gap-2 mb-3 text-xs sm:text-sm ${roleTextClass}`}>
-              <div className={`w-2.5 h-2.5 rounded-full animate-pulse ${packageName === 'LIFETIME' ? 'bg-cyan-glow' : packageName === 'VIP' ? 'bg-purple-glow' : 'bg-success'}`} />
-              <span className="font-semibold">{statusMsg}</span>
-            </div>
-          )}
-
-          {/* Manual recheck button */}
-          {onRecheck && (
-            <div className="mb-4">
-              <Button
-                type="button"
-                onClick={handleRecheck}
-                disabled={rechecking}
-                className={`w-full ${roleTintClass} ${roleTextClass}`}
-                variant="outline"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 mr-2 ${rechecking ? 'animate-spin' : ''}`} />
-                {rechecking ? 'Mengecek pembayaran...' : 'Saya Sudah Bayar, Cek Sekarang'}
-              </Button>
-              {recheckMsg && (
-                <p className="text-xs text-success mt-1.5">{recheckMsg}</p>
-              )}
-            </div>
-          )}
-
-          {/* Contact Admin Hint */}
-          {showContactHint && contactLink && (
-            <div className="bg-primary/10 border border-primary/30 p-3 rounded-xl mb-4 text-left">
-              <div className="flex items-start gap-2.5">
-                <AlertCircle className="w-4 h-4 text-primary shrink-0 mt-0.5" />
-                <div className="text-xs">
-                  <p className="text-foreground font-semibold">Sudah transfer tapi belum terverifikasi?</p>
-                  <p className="text-muted-foreground mt-0.5 mb-2">Hubungi admin dengan membawa nomor transaksi ini.</p>
-                  <a
-                    href={contactLink.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1.5 bg-success/20 hover:bg-success/30 text-success px-3 py-1.5 rounded-lg text-xs font-medium transition-colors"
-                  >
-                    <MessageCircle className="w-3.5 h-3.5" />
-                    Hubungi WhatsApp Admin
-                  </a>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Transaction Info Footer */}
-          <div className="bg-muted/30 p-2.5 rounded-lg mb-4 flex items-center justify-between text-xs">
-            <span className="text-muted-foreground text-[11px]">ID Transaksi:</span>
-            <div className="flex items-center gap-1.5">
-              <code className="font-mono text-foreground font-medium text-[11px]">{paymentData.transactionId}</code>
-              <button
-                onClick={() => onCopy(paymentData.transactionId)}
-                className="p-1 rounded bg-primary/10 hover:bg-primary/20 text-primary transition-all"
-                title="Salin ID"
-              >
-                <Copy className="w-3 h-3" />
-              </button>
-            </div>
           </div>
-
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={onCancel}
-            className="w-full text-xs text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-          >
-            Batalkan Transaksi
-          </Button>
         </div>
       </div>
     </div>

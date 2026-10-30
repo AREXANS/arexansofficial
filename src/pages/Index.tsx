@@ -279,6 +279,18 @@ const Index = () => {
     window.addEventListener('storage', handleMaintenanceChange);
 
     const loadGateway = async () => {
+      try {
+        // Coba periksa endpoint status realtime terlebih dahulu
+        const stResp = await fetch('/api/device/status').catch(() => null);
+        if (stResp && stResp.ok) {
+          const stJson = await stResp.json().catch(() => null);
+          if (stJson && typeof stJson.online === 'boolean') {
+            setDeveloperOnline(stJson.online);
+            return;
+          }
+        }
+      } catch {}
+
       const { data } = await supabase
         .from('app_settings')
         .select('key,value')
@@ -287,8 +299,8 @@ const Index = () => {
       setGatewaySetting(map.payment_gateway || 'all');
       const last = parseInt(map.developer_last_seen || '0', 10);
       // ArexansPay (Payment 1) HANYA online ketika HP admin online aktif data.
-      // Jika HP mati / data tidak aktif (> 3 menit tanpa heartbeat), status offline.
-      const STALE_MS = 3 * 60 * 1000;
+      // Jika HP mati / data tidak aktif (> 60 detik tanpa heartbeat dari APK), status offline.
+      const STALE_MS = 60 * 1000;
       setDeveloperOnline(Boolean(last) && (Date.now() - last < STALE_MS));
     };
 
@@ -296,7 +308,7 @@ const Index = () => {
     loadPackages();
     checkMaintenance();
     loadGateway();
-    const heartbeatPoll = setInterval(loadGateway, 15000);
+    const heartbeatPoll = setInterval(loadGateway, 10000);
     return () => {
       clearInterval(heartbeatPoll);
       window.removeEventListener('maintenance_state_changed', handleMaintenanceChange);

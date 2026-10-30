@@ -77,6 +77,14 @@ export const TokoScriptOrderModal: React.FC<TokoScriptOrderModalProps> = ({
   useEffect(() => {
     const loadGatewaySettings = async () => {
       try {
+        const stResp = await fetch('/api/device/status').catch(() => null);
+        if (stResp && stResp.ok) {
+          const stJson = await stResp.json().catch(() => null);
+          if (stJson && typeof stJson.online === 'boolean') {
+            setPhoneOnline(stJson.online);
+          }
+        }
+
         const { data } = await supabase.from('app_settings').select('key, value').in('key', [
           'enabled_gateways', 'payment_gateway', 'developer_last_seen'
         ]);
@@ -96,7 +104,9 @@ export const TokoScriptOrderModal: React.FC<TokoScriptOrderModalProps> = ({
         }
         setEnabledGateways(list);
         const last = parseInt(map.developer_last_seen || '0', 10);
-        setPhoneOnline(Boolean(last) && (Date.now() - last < 3 * 60 * 1000));
+        // Sinyal heartbeat APK ArexansPay (60 detik timeout)
+        const STALE_MS = 60 * 1000;
+        setPhoneOnline(Boolean(last) && (Date.now() - last < STALE_MS));
       } catch {}
     };
     if (isOpen) {
@@ -318,8 +328,8 @@ export const TokoScriptOrderModal: React.FC<TokoScriptOrderModalProps> = ({
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-md w-full p-5 bg-card/95 backdrop-blur-2xl border-border/80 shadow-2xl rounded-2xl">
-        <DialogHeader className="text-left space-y-1">
+      <DialogContent className="max-w-md md:max-w-3xl lg:max-w-4xl w-full p-5 sm:p-6 bg-card/95 backdrop-blur-2xl border-border/80 shadow-2xl rounded-2xl max-h-[92vh] overflow-y-auto">
+        <DialogHeader className="text-left space-y-1 pb-2 border-b border-border/60">
           <div className="flex items-center gap-2">
             <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-primary/20 text-primary border border-primary/40">
               Order Script
@@ -330,113 +340,129 @@ export const TokoScriptOrderModal: React.FC<TokoScriptOrderModalProps> = ({
               </span>
             )}
           </div>
-          <DialogTitle className="text-lg font-bold text-foreground">
+          <DialogTitle className="text-lg md:text-xl font-bold text-foreground">
             {product.title}
           </DialogTitle>
           <DialogDescription className="text-xs text-muted-foreground">
-            Masukkan key yang diinginkan atau buat acak, lalu tentukan paket durasi.
+            {product.description || 'Pilih durasi paket lisensi dan tentukan jalur pembayaran yang diinginkan.'}
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4 pt-1">
-          {/* 1. KOLOM KEY CUSTOM / ACAK */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
+        <div className="md:grid md:grid-cols-12 md:gap-6 pt-3">
+          {/* KOLOM KIRI (DESKTOP): PILIH PAKET DURASI */}
+          <div className="md:col-span-5 space-y-3.5 mb-4 md:mb-0">
+            <div className="space-y-2">
               <Label className="text-xs font-semibold text-foreground flex items-center gap-1.5">
-                <ShieldCheck className="w-3.5 h-3.5 text-primary" />
-                Key Lisensi (Custom / Acak)
+                <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
+                Pilih Paket Durasi
               </Label>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={generateRandomKey}
-                className="h-7 px-2.5 text-xs text-primary border-primary/40 hover:bg-primary/10 gap-1 rounded-lg"
-              >
-                <Dices className="w-3.5 h-3.5" />
-                Acak
-              </Button>
-            </div>
-            <div className="relative">
-              <Input
-                value={licenseKey}
-                onChange={(e) => {
-                  setLicenseKey(e.target.value.toUpperCase());
-                  setErrorMsg('');
-                }}
-                placeholder="Contoh: AXS-MYKEY123"
-                className="font-mono text-sm tracking-wider uppercase h-11 bg-background/60 border-primary/30 focus-visible:ring-primary/40 rounded-xl"
-                maxLength={24}
-              />
-            </div>
-            <p className="text-[11px] text-muted-foreground">
-              Key ini akan otomatis aktif setelah pembayaran QRIS diverifikasi.
-            </p>
-          </div>
 
-          {/* 2. PILIH PAKET */}
-          <div className="space-y-2">
-            <Label className="text-xs font-semibold text-foreground flex items-center gap-1.5">
-              <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
-              Pilih Paket Durasi
-            </Label>
+              {activePackages.length === 0 ? (
+                <div className="p-3 text-xs text-muted-foreground text-center border border-dashed rounded-xl">
+                  Belum ada paket aktif untuk script ini.
+                </div>
+              ) : (
+                <RadioGroup
+                  value={selectedPackageId}
+                  onValueChange={setSelectedPackageId}
+                  className="grid gap-2 max-h-72 overflow-y-auto pr-1"
+                >
+                  {activePackages.map((pkg) => {
+                    const isSelected = selectedPackage?.id === pkg.id;
+                    const basePrice = pkg.price;
 
-            {activePackages.length === 0 ? (
-              <div className="p-3 text-xs text-muted-foreground text-center border border-dashed rounded-xl">
-                Belum ada paket aktif untuk script ini.
-              </div>
-            ) : (
-              <RadioGroup
-                value={selectedPackageId}
-                onValueChange={setSelectedPackageId}
-                className="grid gap-2 max-h-56 overflow-y-auto pr-1"
-              >
-                {activePackages.map((pkg) => {
-                  const isSelected = selectedPackage?.id === pkg.id;
-                  const basePrice = pkg.price;
-
-                  return (
-                    <label
-                      key={pkg.id}
-                      htmlFor={`pkg-${pkg.id}`}
-                      className={`flex items-center justify-between p-3 rounded-xl border cursor-pointer transition-all ${
-                        isSelected
-                          ? 'border-primary bg-primary/15 shadow-sm shadow-primary/20'
-                          : 'border-border/70 bg-card/40 hover:bg-muted/30'
-                      }`}
-                    >
-                      <div className="flex items-center gap-3">
-                        <RadioGroupItem value={pkg.id} id={`pkg-${pkg.id}`} />
-                        <div>
-                          <div className="text-xs font-bold text-foreground flex items-center gap-1.5">
-                            {pkg.name}
-                            {pkg.days >= 999999 && (
-                              <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30">
-                                Permanen
-                              </span>
+                    return (
+                      <label
+                        key={pkg.id}
+                        htmlFor={`pkg-${pkg.id}`}
+                        className={`flex items-center justify-between p-3 rounded-xl border cursor-pointer transition-all ${
+                          isSelected
+                            ? 'border-primary bg-primary/15 shadow-sm shadow-primary/20'
+                            : 'border-border/70 bg-card/40 hover:bg-muted/30'
+                        }`}
+                      >
+                        <div className="flex items-center gap-3">
+                          <RadioGroupItem value={pkg.id} id={`pkg-${pkg.id}`} />
+                          <div>
+                            <div className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                              {pkg.name}
+                              {pkg.days >= 999999 && (
+                                <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                                  Permanen
+                                </span>
+                              )}
+                            </div>
+                            {pkg.description && (
+                              <p className="text-[11px] text-muted-foreground mt-0.5 line-clamp-1">
+                                {pkg.description}
+                              </p>
                             )}
                           </div>
-                          {pkg.description && (
-                            <p className="text-[11px] text-muted-foreground mt-0.5">
-                              {pkg.description}
-                            </p>
-                          )}
                         </div>
-                      </div>
-                      <div className="text-right">
-                        <div className="text-xs font-extrabold text-primary font-mono">
-                          {formatRupiah(basePrice)}
+                        <div className="text-right">
+                          <div className="text-xs font-extrabold text-primary font-mono">
+                            {formatRupiah(basePrice)}
+                          </div>
+                          <div className="text-[10px] text-muted-foreground">
+                            {pkg.days >= 999999 ? 'Lifetime' : `${pkg.days} hari`}
+                          </div>
                         </div>
-                        <div className="text-[10px] text-muted-foreground">
-                          {pkg.days >= 999999 ? 'Lifetime' : `${pkg.days} hari`}
-                        </div>
-                      </div>
-                    </label>
-                  );
-                })}
-              </RadioGroup>
-            )}
+                      </label>
+                    );
+                  })}
+                </RadioGroup>
+              )}
+            </div>
+
+            {/* Quick Benefits Card */}
+            <div className="p-3 rounded-xl bg-muted/30 border border-border/60 text-[11px] space-y-1.5 hidden md:block">
+              <div className="font-semibold text-foreground flex items-center gap-1.5">
+                <ShieldCheck className="w-3.5 h-3.5 text-primary" /> Keuntungan Beli di Sini:
+              </div>
+              <ul className="text-muted-foreground space-y-1 list-disc list-inside">
+                <li>Key instan & terbit otomatis</li>
+                <li>Garansi pembekuan waktu saat maintenance</li>
+                <li>Anti-dumper & proteksi akun Roblox</li>
+              </ul>
+            </div>
           </div>
+
+          {/* KOLOM KANAN (DESKTOP): KEY & METODE PEMBAYARAN */}
+          <div className="md:col-span-7 space-y-4">
+            {/* 1. KOLOM KEY CUSTOM / ACAK */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                  <ShieldCheck className="w-3.5 h-3.5 text-primary" />
+                  Key Lisensi (Custom / Acak)
+                </Label>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={generateRandomKey}
+                  className="h-7 px-2.5 text-xs text-primary border-primary/40 hover:bg-primary/10 gap-1 rounded-lg"
+                >
+                  <Dices className="w-3.5 h-3.5" />
+                  Acak
+                </Button>
+              </div>
+              <div className="relative">
+                <Input
+                  value={licenseKey}
+                  onChange={(e) => {
+                    setLicenseKey(e.target.value.toUpperCase());
+                    setErrorMsg('');
+                  }}
+                  placeholder="Contoh: AXS-MYKEY123"
+                  className="font-mono text-sm tracking-wider uppercase h-11 bg-background/60 border-primary/30 focus-visible:ring-primary/40 rounded-xl"
+                  maxLength={24}
+                />
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                Key ini akan otomatis aktif setelah pembayaran QRIS diverifikasi.
+              </p>
+            </div>
 
           {errorMsg && (
             <div className="p-2.5 rounded-xl bg-destructive/15 border border-destructive/40 text-destructive text-xs">
@@ -716,6 +742,7 @@ export const TokoScriptOrderModal: React.FC<TokoScriptOrderModalProps> = ({
                 )}
               </Button>
             </div>
+          </div>
           </div>
         </div>
       </DialogContent>

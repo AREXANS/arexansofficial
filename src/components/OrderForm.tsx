@@ -145,9 +145,22 @@ const OrderForm: FC<OrderFormProps> = ({
       }
       setEnabledGateways(list);
 
-      // Heartbeat check for phone (ArexansPay)
+      // Check realtime device status endpoint first
+      try {
+        const stResp = await fetch('/api/device/status').catch(() => null);
+        if (stResp && stResp.ok) {
+          const stJson = await stResp.json().catch(() => null);
+          if (stJson && typeof stJson.online === 'boolean') {
+            if (developerOnline === undefined) {
+              setPhoneOnline(stJson.online);
+            }
+          }
+        }
+      } catch {}
+
+      // Heartbeat check for phone (ArexansPay) with 60s threshold
       const last = parseInt(map.developer_last_seen || '0', 10);
-      const isOnline = !!last && (Date.now() - last < 3 * 60 * 1000);
+      const isOnline = !!last && (Date.now() - last < 60 * 1000);
       if (developerOnline === undefined) {
         setPhoneOnline(isOnline);
       }
@@ -447,25 +460,153 @@ const OrderForm: FC<OrderFormProps> = ({
 
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4 bg-background relative overflow-hidden">
+    <div className="min-h-screen flex items-center justify-center p-3 sm:p-5 lg:p-8 bg-background relative overflow-hidden">
       <GlobalBackground />
-      <div className={`${roleCardClass} p-8 max-w-md w-full relative z-10`}>
-        <button onClick={onBack} className="absolute top-6 left-6 text-muted-foreground hover:text-foreground transition-colors duration-200 flex items-center gap-2 font-medium">
-          <span>←</span> Kembali
-        </button>
-
-        <div className="text-center mb-8 pt-8">
-          <div className={`inline-block px-4 py-2 rounded-full border text-sm font-bold mb-4 ${roleTintClass} ${roleTextClass}`}>
-            Paket {selectedPkg === 'LIFETIME' ? 'LIFETIME ADMIN' : selectedPkg}
+      <div className={`${roleCardClass} p-5 sm:p-7 lg:p-9 max-w-md md:max-w-3xl lg:max-w-5xl xl:max-w-6xl w-full relative z-10 my-4 rounded-2xl shadow-2xl border border-white/10`}>
+        {/* Top Header Bar */}
+        <div className="flex items-center justify-between gap-3 mb-6 pb-4 border-b border-border/60">
+          <button onClick={onBack} className="text-muted-foreground hover:text-foreground transition-colors duration-200 flex items-center gap-2 font-medium text-xs sm:text-sm">
+            <span>←</span> Kembali
+          </button>
+          <div className="flex items-center gap-2">
+            <span className={`inline-block px-3.5 py-1 rounded-full border text-xs font-bold ${roleTintClass} ${roleTextClass}`}>
+              Paket {selectedPkg === 'LIFETIME' ? 'LIFETIME ADMIN' : selectedPkg}
+            </span>
+            {resellerCode && (
+              <span className="text-xs px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-medium">
+                Ref: {resellerCode}
+              </span>
+            )}
           </div>
-          <h2 className="text-2xl font-display font-bold text-foreground">Isi Data Pembelian</h2>
         </div>
 
         {errorMsg && (
           <div className="bg-destructive/10 border border-destructive/50 text-destructive p-4 rounded-xl mb-6 text-sm animate-slide-in">{errorMsg}</div>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-6">
+        <div className="lg:grid lg:grid-cols-12 lg:gap-8 items-start">
+          {/* LEFT COLUMN (DESKTOP): PACKAGE DETAILS & SUMMARY */}
+          <div className="lg:col-span-5 space-y-4 mb-6 lg:mb-0">
+            {/* Package Hero Box */}
+            <div className={`p-5 rounded-2xl border ${roleTintClass} space-y-3`}>
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                  Detail Paket
+                </span>
+                <span className={`font-mono font-bold text-sm ${roleTextClass}`}>
+                  {selectedPkg === 'LIFETIME' ? 'Akses Permanen' : `Rp ${pricePerDay.toLocaleString('id-ID')} / hari`}
+                </span>
+              </div>
+              <h3 className="text-xl font-display font-bold text-foreground">
+                Paket {selectedPkg === 'LIFETIME' ? 'LIFETIME ADMIN' : selectedPkg}
+              </h3>
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                {selectedPkg === 'LIFETIME'
+                  ? 'Akses eksklusif selamanya tanpa batas waktu dengan seluruh fitur VIP dan hak akses Admin.'
+                  : selectedPkg === 'VIP'
+                  ? 'Akses penuh ke semua fitur Normal + fitur VIP eksklusif, script injector prioritas & dukungan penuh.'
+                  : 'Paket standar andalan untuk kebutuhan sehari-hari dengan update script rutin.'}
+              </p>
+
+              {/* Rincian Harga Terpilih */}
+              {durationData && (
+                <div className="mt-4 pt-3 border-t border-border/60 space-y-2 text-xs">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Durasi Dipilih:</span>
+                    <span className="font-semibold text-foreground">{durationData.text}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Subtotal Dasar:</span>
+                    <span className={`font-mono ${discountAmount > 0 ? 'line-through text-muted-foreground' : 'text-foreground font-semibold'}`}>
+                      {formatRupiah(estimatedTotal)}
+                    </span>
+                  </div>
+                  {activeDiscount && discountAmount > 0 && (
+                    <div className="flex justify-between text-emerald-400 font-medium">
+                      <span>Diskon ({activeDiscount.discount_percent}%):</span>
+                      <span className="font-mono">-{formatRupiah(discountAmount)}</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between pt-2 border-t border-border/40 text-sm font-bold">
+                    <span className="text-foreground">Total Pembayaran:</span>
+                    <span className={`font-mono ${roleTextClass}`}>{formatRupiah(finalTotal)}</span>
+                  </div>
+                </div>
+              )}
+
+              {isLifetime && (
+                <div className="mt-4 pt-3 border-t border-border/60 space-y-2 text-xs">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Masa Aktif:</span>
+                    <span className="font-semibold text-foreground">Selamanya (Lifetime)</span>
+                  </div>
+                  <div className="flex justify-between pt-2 border-t border-border/40 text-sm font-bold">
+                    <span className="text-foreground">Total Tagihan:</span>
+                    <span className="font-mono text-cyan-400">{formatRupiah(lifetimePrice)}</span>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Jalur Realtime Status Indicator Card */}
+            <div className="p-4 rounded-xl bg-card/60 border border-border/80 space-y-2.5 text-xs">
+              <span className="font-semibold text-foreground flex items-center gap-1.5">
+                <Radio className="w-3.5 h-3.5 text-primary" />
+                Status Ketersediaan Jalur:
+              </span>
+              <div className="space-y-1.5 text-[11px]">
+                <div className="flex items-center justify-between p-2 rounded-lg bg-background/50 border border-border/40">
+                  <span className="text-muted-foreground flex items-center gap-1.5">
+                    <span className={`w-2 h-2 rounded-full ${isArexansPayOnline ? 'bg-emerald-400 animate-pulse' : 'bg-red-400'}`} />
+                    Jalur 1: ArexansPay QRIS
+                  </span>
+                  <span className={`px-2 py-0.5 rounded-full font-medium text-[10px] ${
+                    isArexansPayOnline ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'
+                  }`}>
+                    {isArexansPayOnline ? 'Online (Bebas Fee)' : 'Offline (HP Terputus)'}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between p-2 rounded-lg bg-background/50 border border-border/40">
+                  <span className="text-muted-foreground flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                    Jalur 2: XMPayment QRIS
+                  </span>
+                  <span className="px-2 py-0.5 rounded-full font-medium text-[10px] bg-emerald-500/20 text-emerald-400">
+                    Online 24/7
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between p-2 rounded-lg bg-background/50 border border-border/40">
+                  <span className="text-muted-foreground flex items-center gap-1.5">
+                    <span className={`w-2 h-2 rounded-full ${isPoketoOnline ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+                    Jalur 3: VA Bank &amp; Kartu
+                  </span>
+                  <span className={`px-2 py-0.5 rounded-full font-medium text-[10px] ${
+                    isPoketoOnline ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-amber-300'
+                  }`}>
+                    {isPoketoOnline ? 'Online' : 'Min. Rp 10.000'}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Proteksi & Garansi Card */}
+            <div className="p-3.5 rounded-xl bg-muted/20 border border-border/50 text-[11px] space-y-1.5 hidden lg:block text-muted-foreground">
+              <div className="font-semibold text-foreground flex items-center gap-1.5">
+                <ShieldCheck className="w-3.5 h-3.5 text-primary" /> Jaminan Layanan AREXANS:
+              </div>
+              <ul className="space-y-1 list-disc list-inside">
+                <li>Verifikasi otomatis detik itu juga setelah bayar.</li>
+                <li>Key langsung terbit di layar &amp; bisa disalin.</li>
+                <li>Anti-rugi: Waktu otomatis dibekukan saat maintenance.</li>
+              </ul>
+            </div>
+          </div>
+
+          {/* RIGHT COLUMN (DESKTOP): FORM PEMESANAN */}
+          <div className="lg:col-span-7">
+            <form onSubmit={handleSubmit} className="space-y-6">
           {/* Key mode tabs */}
           <div>
             <label className="block text-sm font-medium mb-2 text-foreground">Kunci Rahasia</label>
@@ -1003,6 +1144,8 @@ const OrderForm: FC<OrderFormProps> = ({
             )}
           </Button>
         </form>
+          </div>
+        </div>
       </div>
     </div>
   );

@@ -146,6 +146,17 @@ export function executeMockQuery(sqlText: string, values: any[] = []): { rows: a
     let items = [...(tables.get(tableName) || [])];
 
     if (whereClause) {
+      // Handle IN filters: col IN ('a', 'b', 'c')
+      const inMatches = [...whereClause.matchAll(/(?:["']?([a-zA-Z0-9_]+)["']?)\s+IN\s*\((.*?)\)/gi)];
+      for (const inM of inMatches) {
+        const col = inM[1].toLowerCase();
+        const allowedVals = inM[2].split(',').map(s => s.trim().replace(/^'|'$/g, '').toLowerCase());
+        items = items.filter(item => {
+          const val = String(item[col] ?? item[inM[1]] ?? '').toLowerCase();
+          return allowedVals.includes(val);
+        });
+      }
+
       // Handle simple equality filters: col = $1 or col = 'value'
       const eqMatches = [...whereClause.matchAll(/(?:["']?([a-zA-Z0-9_]+)["']?)\s*=\s*(?:\$(\d+)|'([^']*)'|(\S+))/gi)];
       for (const eq of eqMatches) {
@@ -210,48 +221,120 @@ export function executeMockQuery(sqlText: string, values: any[] = []): { rows: a
   }
 
   // 3. INSERT INTO
-  const insertMatch = trimmed.match(/INSERT\s+INTO\s+(["']?[a-zA-Z0-9_]+["']?)\s*\((.*?)\)\s*VALUES\s*\((.*?)\)(?:\s+ON\s+CONFLICT\s*\((.*?)\)\s*DO\s+UPDATE\s+SET\s*(.*?))?(?:\s+RETURNING\s+.*)?$/i);
-  if (insertMatch) {
-    const tableName = normalizeTableName(insertMatch[1]);
-    const cols = insertMatch[2].split(',').map(c => c.trim().replace(/["']/g, ''));
-    const valTokens = insertMatch[3].split(',').map(v => v.trim());
-    const conflictCol = insertMatch[4]?.trim().replace(/["']/g, '');
+  if (trimmed.toUpperCase().startsWith('INSERT INTO')) {
+    const tableM = trimmed.match(/INSERT\s+INTO\s+([\"']?[a-zA-Z0-9_]+[\"']?)/i);
+    if (tableM) {
+      const tableName = normalizeTableName(tableM[1]);
+      const colsM = trimmed.match(/INSERT\s+INTO\s+[^\(]+\(([\s\S]*?)\)\s*VALUES/i);
+      if (colsM) {
+        const cols = colsM[1].split(',').map(c => c.trim().replace(/[\"']/g, ''));
+        const valuesStart = trimmed.toUpperCase().indexOf('VALUES');
+        const afterValues = trimmed.slice(valuesStart + 6).trim();
 
-    const newRow: any = {};
-    cols.forEach((col, i) => {
-      const token = valTokens[i];
-      if (token && token.startsWith('$')) {
-        const valIdx = parseInt(token.slice(1), 10) - 1;
-        newRow[col] = values[valIdx];
-      } else {
-        newRow[col] = token?.replace(/^'|'$/g, '');
+        let parenDepth = 0;
+        let startIdx = -1;
+        let endIdx = -1;
+        for (let i = 0; i < afterValues.length; i++) {
+          if (afterValues[i] === '(') {
+            if (parenDepth === 0) startIdx = i;
+            parenDepth++;
+          } else if (afterValues[i] === ')') {
+            parenDepth--;
+            if (parenDepth === 0) {
+              endIdx = i;
+              break;
+            }
+          }
+        }
+
+        if (startIdx !== -1 && endIdx !== -1) {
+          const valuesStr = afterValues.slice(startIdx + 1, endIdx);
+          
+          // Helper to split SQL tokens respecting quotes and parens
+          const valTokens: string[] = [];
+          let current = '';
+          let inQuote = false;
+          let quoteChar = '';
+          let depth = 0;
+          for (let i = 0; i < valuesStr.length; i++) {
+            const ch = valuesStr[i];
+            if (inQuote) {
+              current += ch;
+              if (ch === quoteChar) {
+                if (valuesStr[i + 1] === quoteChar) {
+                  current += quoteChar;
+                  i++;
+                } else {
+                  inQuote = false;
+                }
+              }
+            } else {
+              if (ch === "'" || ch === '"') {
+                inQuote = true;
+                quoteChar = ch;
+                current += ch;
+              } else if (ch === '(') {
+                depth++;
+                current += ch;
+              } else if (ch === ')') {
+                depth--;
+                current += ch;
+              } else if (ch === ',' && depth === 0) {
+                valTokens.push(current.trim());
+                current = '';
+              } else {
+                current += ch;
+              }
+            }
+          }
+          if (current.trim().length > 0) valTokens.push(current.trim());
+
+          const conflictM = trimmed.match(/ON\s+CONFLICT\s*\(([^)]+)\)\s*DO\s+UPDATE\s+SET\s*([\s\S]*?)(?:\s+RETURNING|\s*$)/i);
+          const conflictCol = conflictM ? conflictM[1].trim().replace(/[\"']/g, '') : null;
+
+          const newRow: any = {};
+          cols.forEach((col, i) => {
+            const token = valTokens[i];
+            if (token && token.startsWith('$')) {
+              const valIdx = parseInt(token.slice(1), 10) - 1;
+              newRow[col] = values[valIdx];
+            } else if (token && token.toLowerCase() === 'now()') {
+              newRow[col] = new Date().toISOString();
+            } else {
+              newRow[col] = token?.replace(/^'|'$/g, '');
+            }
+          });
+
+          if (!newRow.id) {
+            newRow.id = Math.random().toString(36).substring(2, 10) + '-' + Date.now();
+          }
+          if (!newRow.created_at) {
+            newRow.created_at = new Date().toISOString();
+          }
+          newRow.updated_at = new Date().toISOString();
+
+          let items = tables.get(tableName);
+          if (!items) {
+            items = [];
+            tables.set(tableName, items);
+          }
+
+          if (conflictCol) {
+            const existingIdx = items.findIndex(item => String(item[conflictCol] ?? item[conflictCol.toLowerCase()]).toLowerCase() === String(newRow[conflictCol] ?? newRow[conflictCol.toLowerCase()]).toLowerCase());
+            if (existingIdx >= 0) {
+              items[existingIdx] = { ...items[existingIdx], ...newRow };
+              // Remove any stale duplicate rows with the same key
+              const filtered = items.filter((item, idx) => idx === existingIdx || String(item[conflictCol] ?? item[conflictCol.toLowerCase()]).toLowerCase() !== String(newRow[conflictCol] ?? newRow[conflictCol.toLowerCase()]).toLowerCase());
+              tables.set(tableName, filtered);
+              return { rows: [items[existingIdx]], rowCount: 1 };
+            }
+          }
+
+          items.push(newRow);
+          return { rows: [newRow], rowCount: 1 };
+        }
       }
-    });
-
-    if (!newRow.id) {
-      newRow.id = Math.random().toString(36).substring(2, 10) + '-' + Date.now();
     }
-    if (!newRow.created_at) {
-      newRow.created_at = new Date().toISOString();
-    }
-    newRow.updated_at = new Date().toISOString();
-
-    let items = tables.get(tableName);
-    if (!items) {
-      items = [];
-      tables.set(tableName, items);
-    }
-
-    if (conflictCol) {
-      const existingIdx = items.findIndex(item => String(item[conflictCol]) === String(newRow[conflictCol]));
-      if (existingIdx >= 0) {
-        items[existingIdx] = { ...items[existingIdx], ...newRow };
-        return { rows: [items[existingIdx]], rowCount: 1 };
-      }
-    }
-
-    items.push(newRow);
-    return { rows: [newRow], rowCount: 1 };
   }
 
   // 4. UPDATE
