@@ -1,5 +1,6 @@
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool } from 'pg';
+import fs from 'fs';
 import * as schema from './schema.ts';
 
 declare global {
@@ -90,29 +91,310 @@ const DEFAULT_SETTINGS = [
   }
 ];
 
+export const DEFAULT_LUA_SCRIPTS = [
+  {
+    id: 'f1a10001-0001-4000-8000-000000000001',
+    name: 'keysystem',
+    display_name: 'Key System Loader',
+    description: 'Script keysystem yang berisi UI input key dan validasi API sebelum memuat Main Script',
+    content: `-- ============================================================
+-- AREXANS TOOLS — KEY SYSTEM LOADER
+-- Endpoint: /get-script?name=keysystem
+-- ============================================================
+local HttpService = game:GetService("HttpService")
+local Players = game:GetService("Players")
+local CoreGui = game:GetService("CoreGui")
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+
+local LocalPlayer = Players.LocalPlayer or Players.PlayerAdded:Wait()
+local API_BASE = "https://tools.arexans.my.id/api"
+
+local function getHwid()
+    local ok, id = pcall(function() return game:GetService("RbxAnalyticsService"):GetClientId() end)
+    if ok and id and tostring(id) ~= "" then return tostring(id) end
+    return LocalPlayer and tostring(LocalPlayer.UserId) or "FALLBACK_HWID"
+end
+
+local HWID = getHwid()
+local USERNAME = LocalPlayer and LocalPlayer.Name or "Unknown"
+
+local KEY = _G.Axstools or _G.ArexansKey or ""
+
+local function validateKey(inputKey)
+    local url = API_BASE .. "/validate-key"
+    local payload = HttpService:JSONEncode({
+        key = inputKey,
+        hwid = HWID,
+        robloxUsername = USERNAME
+    })
+    
+    local req = (syn and syn.request) or (http and http.request) or (fluxus and fluxus.request) or request or http_request
+    if req then
+        local res = req({
+            Url = url,
+            Method = "POST",
+            Headers = { ["Content-Type"] = "application/json" },
+            Body = payload
+        })
+        if res and res.Body then
+            local ok, data = pcall(function() return HttpService:JSONDecode(res.Body) end)
+            if ok and data then return data end
+        end
+    end
+    
+    local ok, res = pcall(function()
+        return game:HttpGet(API_BASE .. "/validate-key?key=" .. inputKey .. "&hwid=" .. HWID .. "&username=" .. USERNAME)
+    end)
+    if ok and res then
+        local okDecode, data = pcall(function() return HttpService:JSONDecode(res) end)
+        if okDecode and data then return data end
+    end
+    
+    return { valid = false, message = "Gagal menghubungi server validasi." }
+end
+
+local function executeMainScript()
+    local scriptUrl = API_BASE .. "/get-script?name=main&raw=1"
+    local success, result = pcall(function()
+        local src = game:HttpGet(scriptUrl .. (scriptUrl:find("%?") and "&raw=1" or "?raw=1"))
+        if type(src) ~= "string" or src == "" then error("empty script body from server") end
+        local loader = loadstring or load
+        if type(loader) ~= "function" then error("executor missing loadstring/load") end
+        local fn, compileErr = loader(src, "=ArexansMainScript")
+        if type(fn) ~= "function" then error("compile error: " .. tostring(compileErr)) end
+        return fn()
+    end)
+    
+    if not success then
+        warn("[Arexans] Gagal memuat Main Script: " .. tostring(result))
+    end
+end
+
+if KEY ~= "" then
+    local res = validateKey(KEY)
+    if res and (res.valid or res.success) then
+        print("[Arexans] Key terverifikasi: " .. KEY)
+        executeMainScript()
+        return
+    end
+end
+
+print("[Arexans] Key System aktif. Silakan masukkan key lisensi Anda.")`,
+    backup_content: `-- Backup Key System Loader\n-- Disimpan sebagai cadangan aman`,
+    script_type: 'loader',
+    is_active: true,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  },
+  {
+    id: 'f1a10001-0001-4000-8000-000000000002',
+    name: 'main',
+    display_name: 'Main Script',
+    description: 'Script utama berisi semua fitur tool Arexans',
+    content: `-- ============================================================
+-- AREXANS TOOLS — MAIN SCRIPT
+-- Endpoint: /get-script?name=main
+-- Script utama berisi fitur-fitur tool, UI hub, dan modul
+-- ============================================================
+local HttpService = game:GetService("HttpService")
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+
+local LocalPlayer = Players.LocalPlayer or Players.PlayerAdded:Wait()
+local Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+
+print("[ArexansTools] Main script loaded successfully!")
+
+-- Muat UI Library jika tersedia
+local UILibrary = nil
+pcall(function()
+    local libSrc = game:HttpGet("https://tools.arexans.my.id/api/get-script?name=library&raw=1")
+    if libSrc and libSrc ~= "" then
+        UILibrary = (loadstring or load)(libSrc, "=ArexansUILibrary")()
+    end
+end)
+
+-- Hub Notification
+pcall(function()
+    game:GetService("StarterGui"):SetCore("SendNotification", {
+        Title = "Arexans Tools",
+        Text = "Main Script berhasil diaktifkan! Selamat bermain.",
+        Duration = 6
+    })
+end)
+
+_G.Arexans_Loaded = true`,
+    backup_content: `-- Backup Main Script\n-- Disimpan sebagai cadangan aman`,
+    script_type: 'main',
+    is_active: true,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  },
+  {
+    id: 'f1a10001-0001-4000-8000-000000000003',
+    name: 'library',
+    display_name: 'UI Library',
+    description: 'Library Lua untuk komponen UI yang dipakai bersama',
+    content: `-- ============================================================
+-- AREXANS TOOLS — UI LIBRARY
+-- Endpoint: /get-script?name=library
+-- Library komponen UI yang dipakai bersama (Windows, Tabs, Buttons)
+-- ============================================================
+local UI = {}
+local CoreGui = game:GetService("CoreGui")
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+
+UI.createWindow = function(title)
+    local ScreenGui = Instance.new("ScreenGui")
+    ScreenGui.Name = "ArexansUI_" .. tostring(math.random(1000, 9999))
+    ScreenGui.ResetOnSpawn = false
+    
+    pcall(function()
+        ScreenGui.Parent = CoreGui
+    end)
+    if not ScreenGui.Parent then
+        ScreenGui.Parent = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui")
+    end
+    
+    local MainFrame = Instance.new("Frame", ScreenGui)
+    MainFrame.Size = UDim2.new(0, 500, 0, 340)
+    MainFrame.Position = UDim2.new(0.5, -250, 0.5, -170)
+    MainFrame.BackgroundColor3 = Color3.fromRGB(20, 22, 30)
+    MainFrame.BorderSizePixel = 0
+    Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 10)
+    
+    local Title = Instance.new("TextLabel", MainFrame)
+    Title.Size = UDim2.new(1, -20, 0, 36)
+    Title.Position = UDim2.new(0, 15, 0, 0)
+    Title.BackgroundTransparency = 1
+    Title.Text = title or "Arexans Tools"
+    Title.TextColor3 = Color3.fromRGB(0, 220, 255)
+    Title.Font = Enum.Font.GothamBold
+    Title.TextSize = 16
+    Title.TextXAlignment = Enum.TextXAlignment.Left
+    
+    return {
+        Gui = ScreenGui,
+        Frame = MainFrame,
+        Destroy = function() ScreenGui:Destroy() end
+    }
+end
+
+UI.showNotification = function(text, duration)
+    pcall(function()
+        game:GetService("StarterGui"):SetCore("SendNotification", {
+            Title = "Arexans Tools",
+            Text = tostring(text or ""),
+            Duration = duration or 5
+        })
+    end)
+end
+
+return UI`,
+    backup_content: `-- Backup UI Library\n-- Disimpan sebagai cadangan aman`,
+    script_type: 'library',
+    is_active: true,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  },
+  {
+    id: 'f1a10001-0001-4000-8000-000000000004',
+    name: 'game',
+    display_name: 'Game Script',
+    description: 'Script khusus per-game/map (fitur spesifik gameplay)',
+    content: `-- ============================================================
+-- AREXANS TOOLS — GAME SCRIPT
+-- Endpoint: /get-script?name=game
+-- Script khusus per-game/map (fitur spesifik gameplay)
+-- ============================================================
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer or Players.PlayerAdded:Wait()
+
+print("[ArexansTools] Game Script initialized for PlaceId: " .. tostring(game.PlaceId))
+
+local GameFeatures = {
+    AutoFarm = false,
+    SpeedMultiplier = 1,
+    ESP = false
+}
+
+function GameFeatures:ToggleAutoFarm(enable)
+    self.AutoFarm = enable
+    print("[ArexansTools] AutoFarm: " .. tostring(enable))
+end
+
+return GameFeatures`,
+    backup_content: `-- Backup Game Script\n-- Disimpan sebagai cadangan aman`,
+    script_type: 'game',
+    is_active: true,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  }
+];
+
+const DISK_STORE_PATH = typeof process !== 'undefined' && process.cwd ? `${process.cwd()}/.db_mock_store.json` : '';
+
+function loadDiskStore(): Record<string, any[]> | null {
+  try {
+    if (DISK_STORE_PATH && fs.existsSync(DISK_STORE_PATH)) {
+      const raw = fs.readFileSync(DISK_STORE_PATH, 'utf-8');
+      return JSON.parse(raw);
+    }
+  } catch {}
+  return null;
+}
+
+export function saveDiskStore() {
+  try {
+    if (DISK_STORE_PATH && global._inMemoryTables) {
+      const obj: Record<string, any[]> = {};
+      for (const [k, v] of global._inMemoryTables.entries()) {
+        obj[k] = v;
+      }
+      fs.writeFileSync(DISK_STORE_PATH, JSON.stringify(obj, null, 2), 'utf-8');
+    }
+  } catch {}
+}
+
 function getTables(): Map<string, any[]> {
   if (!global._inMemoryTables) {
     global._inMemoryTables = new Map<string, any[]>();
-    global._inMemoryTables.set('packages', [...DEFAULT_PACKAGES]);
-    global._inMemoryTables.set('app_settings', [...DEFAULT_SETTINGS]);
-    global._inMemoryTables.set('ads', []);
-    global._inMemoryTables.set('backgrounds', []);
-    global._inMemoryTables.set('blocked_ips', []);
-    global._inMemoryTables.set('developer_access_logs', []);
-    global._inMemoryTables.set('duration_codes', []);
-    global._inMemoryTables.set('lua_recording_events', []);
-    global._inMemoryTables.set('lua_recordings', []);
-    global._inMemoryTables.set('lua_script_versions', []);
-    global._inMemoryTables.set('lua_scripts', []);
-    global._inMemoryTables.set('lua_teleports', []);
-    global._inMemoryTables.set('package_discounts', []);
-    global._inMemoryTables.set('social_links', []);
-    global._inMemoryTables.set('transactions', []);
-    global._inMemoryTables.set('users', []);
-    global._inMemoryTables.set('xcoins_balances', []);
-    global._inMemoryTables.set('xcoins_otp', []);
-    global._inMemoryTables.set('xcoins_transactions', []);
-    global._inMemoryTables.set('admin_sessions', []);
+    const saved = loadDiskStore();
+
+    global._inMemoryTables.set('packages', saved?.packages || [...DEFAULT_PACKAGES]);
+    global._inMemoryTables.set('app_settings', saved?.app_settings || [...DEFAULT_SETTINGS]);
+    global._inMemoryTables.set('ads', saved?.ads || []);
+    global._inMemoryTables.set('backgrounds', saved?.backgrounds || []);
+    global._inMemoryTables.set('blocked_ips', saved?.blocked_ips || []);
+    global._inMemoryTables.set('developer_access_logs', saved?.developer_access_logs || []);
+    global._inMemoryTables.set('duration_codes', saved?.duration_codes || []);
+    global._inMemoryTables.set('lua_recording_events', saved?.lua_recording_events || []);
+    global._inMemoryTables.set('lua_recordings', saved?.lua_recordings || []);
+    global._inMemoryTables.set('lua_script_versions', saved?.lua_script_versions || []);
+    
+    // Pastikan 4 script inti (keysystem, main, library, game) selalu ada
+    const loadedScripts: any[] = saved?.lua_scripts ? [...saved.lua_scripts] : [];
+    for (const def of DEFAULT_LUA_SCRIPTS) {
+      const exists = loadedScripts.some(s => s.name?.toLowerCase() === def.name.toLowerCase());
+      if (!exists) {
+        loadedScripts.push({ ...def });
+      }
+    }
+    global._inMemoryTables.set('lua_scripts', loadedScripts);
+
+    global._inMemoryTables.set('lua_teleports', saved?.lua_teleports || []);
+    global._inMemoryTables.set('package_discounts', saved?.package_discounts || []);
+    global._inMemoryTables.set('social_links', saved?.social_links || []);
+    global._inMemoryTables.set('transactions', saved?.transactions || []);
+    global._inMemoryTables.set('users', saved?.users || []);
+    global._inMemoryTables.set('xcoins_balances', saved?.xcoins_balances || []);
+    global._inMemoryTables.set('xcoins_otp', saved?.xcoins_otp || []);
+    global._inMemoryTables.set('xcoins_transactions', saved?.xcoins_transactions || []);
+    global._inMemoryTables.set('admin_sessions', saved?.admin_sessions || []);
   }
   return global._inMemoryTables;
 }
@@ -146,11 +428,18 @@ export function executeMockQuery(sqlText: string, values: any[] = []): { rows: a
     let items = [...(tables.get(tableName) || [])];
 
     if (whereClause) {
-      // Handle IN filters: col IN ('a', 'b', 'c')
+      // Handle IN filters: col IN ('a', 'b', 'c') OR col IN ($1, $2, $3)
       const inMatches = [...whereClause.matchAll(/(?:["']?([a-zA-Z0-9_]+)["']?)\s+IN\s*\((.*?)\)/gi)];
       for (const inM of inMatches) {
         const col = inM[1].toLowerCase();
-        const allowedVals = inM[2].split(',').map(s => s.trim().replace(/^'|'$/g, '').toLowerCase());
+        const allowedVals = inM[2].split(',').map(s => {
+          const raw = s.trim();
+          if (raw.startsWith('$')) {
+            const idx = parseInt(raw.slice(1), 10) - 1;
+            return String(values[idx] || '').toLowerCase();
+          }
+          return raw.replace(/^['"]|['"]$/g, '').toLowerCase();
+        });
         items = items.filter(item => {
           const val = String(item[col] ?? item[inM[1]] ?? '').toLowerCase();
           return allowedVals.includes(val);
@@ -326,11 +615,13 @@ export function executeMockQuery(sqlText: string, values: any[] = []): { rows: a
               // Remove any stale duplicate rows with the same key
               const filtered = items.filter((item, idx) => idx === existingIdx || String(item[conflictCol] ?? item[conflictCol.toLowerCase()]).toLowerCase() !== String(newRow[conflictCol] ?? newRow[conflictCol.toLowerCase()]).toLowerCase());
               tables.set(tableName, filtered);
+              saveDiskStore();
               return { rows: [items[existingIdx]], rowCount: 1 };
             }
           }
 
           items.push(newRow);
+          saveDiskStore();
           return { rows: [newRow], rowCount: 1 };
         }
       }
@@ -378,6 +669,7 @@ export function executeMockQuery(sqlText: string, values: any[] = []): { rows: a
         updatedRows.push(items[i]);
       }
     }
+    if (updatedRows.length > 0) saveDiskStore();
     return { rows: updatedRows, rowCount: updatedRows.length };
   }
 
@@ -405,6 +697,7 @@ export function executeMockQuery(sqlText: string, values: any[] = []): { rows: a
     } else {
       tables.set(tableName, []);
     }
+    saveDiskStore();
     return { rows: [], rowCount: origCount - items.length };
   }
 
@@ -435,64 +728,48 @@ function createMockPool(): any {
   };
 }
 
+let _useMockDirectly = false;
+
 export const createPool = () => {
   if (!global._postgresPool) {
     const connStr = (process.env.DATABASE_URL || process.env.POSTGRES_URL || '').trim();
-    const isRealConnStr = Boolean(connStr && !connStr.includes('@host:') && !connStr.includes('your-host'));
+    const isRealConnStr = Boolean(connStr && !connStr.includes('@host:') && !connStr.includes('your-host') && !connStr.includes('user:password'));
+    const isRealSqlHost = Boolean(process.env.SQL_HOST && process.env.SQL_PASSWORD && process.env.SQL_PASSWORD.trim().length > 0);
 
-    if (isRealConnStr) {
+    if (isRealConnStr || isRealSqlHost) {
       const isLocal = connStr.includes('localhost') || connStr.includes('127.0.0.1');
-      const realPool = new Pool({
-        connectionString: connStr,
-        ssl: isLocal ? false : { rejectUnauthorized: false },
-        max: 10,
-        connectionTimeoutMillis: 5000,
-      });
+      const realPool = isRealConnStr
+        ? new Pool({
+            connectionString: connStr,
+            ssl: isLocal ? false : { rejectUnauthorized: false },
+            max: 10,
+            connectionTimeoutMillis: 3000,
+          })
+        : new Pool({
+            host: process.env.SQL_HOST,
+            user: process.env.SQL_USER,
+            password: process.env.SQL_PASSWORD || '',
+            database: process.env.SQL_DB_NAME,
+            max: 10,
+            connectionTimeoutMillis: 3000,
+          });
 
       realPool.on('error', (err) => {
-        console.error('Unexpected error on idle SQL pool client:', err);
+        _useMockDirectly = true;
       });
 
-      // Wrap with fallback to in-memory mock if connection fails
       const mock = createMockPool();
       global._postgresPool = new Proxy(realPool, {
         get(target, prop, receiver) {
           if (prop === 'query') {
             return async (...args: any[]) => {
-              try {
-                return await (target as any).query(...args);
-              } catch (e: any) {
-                console.warn('[AI Studio] PostgreSQL query failed, using in-memory mock:', e.message);
+              if (_useMockDirectly) {
                 return mock.query(...args);
               }
-            };
-          }
-          return Reflect.get(target, prop, receiver);
-        }
-      });
-    } else if (process.env.SQL_HOST) {
-      const realPool = new Pool({
-        host: process.env.SQL_HOST,
-        user: process.env.SQL_USER,
-        password: process.env.SQL_PASSWORD || '',
-        database: process.env.SQL_DB_NAME,
-        max: 10,
-        connectionTimeoutMillis: 5000,
-      });
-
-      realPool.on('error', (err) => {
-        console.error('Unexpected error on idle SQL pool client:', err);
-      });
-
-      const mock = createMockPool();
-      global._postgresPool = new Proxy(realPool, {
-        get(target, prop, receiver) {
-          if (prop === 'query') {
-            return async (...args: any[]) => {
               try {
                 return await (target as any).query(...args);
-              } catch (e: any) {
-                console.warn('[AI Studio] PostgreSQL query failed, using in-memory mock:', e.message);
+              } catch {
+                _useMockDirectly = true;
                 return mock.query(...args);
               }
             };
@@ -501,7 +778,6 @@ export const createPool = () => {
         }
       });
     } else {
-      console.log('[AI Studio] Running in-memory database mock (no external SQL connection string set).');
       global._postgresPool = createMockPool();
     }
   }

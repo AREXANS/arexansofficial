@@ -974,7 +974,7 @@ const Admin = () => {
                 </TabsTrigger>
                 <TabsTrigger value="scripts" className="gap-1.5 px-3 py-2 text-xs md:text-sm whitespace-nowrap">
                   <FileCode className="w-4 h-4" />
-                  <span className="hidden xs:inline">Scripts</span>
+                  <span className="hidden xs:inline">Scripts (4 Inti)</span>
                 </TabsTrigger>
                 <TabsTrigger value="whitelist" className="gap-1.5 px-3 py-2 text-xs md:text-sm whitespace-nowrap">
                   <Shield className="w-4 h-4" />
@@ -982,7 +982,7 @@ const Admin = () => {
                 </TabsTrigger>
                 <TabsTrigger value="upload" className="gap-1.5 px-3 py-2 text-xs md:text-sm whitespace-nowrap">
                   <Upload className="w-4 h-4" />
-                  <span className="hidden xs:inline">Upload</span>
+                  <span className="hidden xs:inline">Upload Custom</span>
                 </TabsTrigger>
                 <TabsTrigger value="recordings" className="gap-1.5 px-3 py-2 text-xs md:text-sm whitespace-nowrap">
                   <Film className="w-4 h-4 text-primary" />
