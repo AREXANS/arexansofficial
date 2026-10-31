@@ -407,7 +407,24 @@ export async function handleFunctionsRequest(req: any, res: any): Promise<boolea
 
   // 1. get-script
   if (funcName === 'get-script') {
-    const name = searchParams.get('name') || '';
+    let name = searchParams.get('name') || '';
+    const nameMap: Record<string, string> = {
+      'keysystem.lua': 'keysystem',
+      'keysistem': 'keysystem',
+      'keysistem.lua': 'keysystem',
+      'arexanstools': 'main',
+      'arexanstools.lua': 'main',
+      'arexans': 'main',
+      'uilibrary': 'library',
+      'uilibrary.lua': 'library',
+      'ui-library': 'library',
+      'games': 'game',
+      'games.lua': 'game',
+      'game.lua': 'game',
+    };
+    if (nameMap[name.toLowerCase()]) {
+      name = nameMap[name.toLowerCase()];
+    }
     try {
       const q = await pool.query('SELECT content FROM lua_scripts WHERE name = $1 LIMIT 1', [name]);
       if (q.rows.length > 0 && q.rows[0].content) {

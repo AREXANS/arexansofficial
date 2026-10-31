@@ -155,237 +155,43 @@ const ScriptManagement: FC = () => {
   const PUBLIC_DOMAIN = 'https://tools.arexans.my.id';
   const SUPABASE_API_BASE = `${typeof window !== 'undefined' ? window.location.origin : ''}/functions/v1`;
   
-  const DEFAULT_SCRIPTS_FALLBACK: Array<Omit<LuaScript, 'id' | 'created_at' | 'updated_at'>> = [
+  interface ScriptMeta {
+    name: string;
+    display_name: string;
+    description: string;
+    script_type: string;
+    assetUrl: string;
+  }
+
+  const SCRIPT_METAS: ScriptMeta[] = [
     {
       name: 'keysystem',
-      display_name: 'Key System Loader',
-      description: 'Script keysystem yang berisi UI input key dan validasi API sebelum memuat Main Script',
+      display_name: 'keysystem.lua',
+      description: 'Script Key System Loader (keysystem.lua)',
       script_type: 'loader',
-      is_active: true,
-      content: `-- ============================================================
--- AREXANS TOOLS — KEY SYSTEM LOADER
--- Endpoint: /get-script?name=keysystem
--- ============================================================
-local HttpService = game:GetService("HttpService")
-local Players = game:GetService("Players")
-local CoreGui = game:GetService("CoreGui")
-local TweenService = game:GetService("TweenService")
-local UserInputService = game:GetService("UserInputService")
-
-local LocalPlayer = Players.LocalPlayer or Players.PlayerAdded:Wait()
-local API_BASE = "https://tools.arexans.my.id/api"
-
-local function getHwid()
-    local ok, id = pcall(function() return game:GetService("RbxAnalyticsService"):GetClientId() end)
-    if ok and id and tostring(id) ~= "" then return tostring(id) end
-    return LocalPlayer and tostring(LocalPlayer.UserId) or "FALLBACK_HWID"
-end
-
-local HWID = getHwid()
-local USERNAME = LocalPlayer and LocalPlayer.Name or "Unknown"
-
-local KEY = _G.Axstools or _G.ArexansKey or ""
-
-local function validateKey(inputKey)
-    local url = API_BASE .. "/validate-key"
-    local payload = HttpService:JSONEncode({
-        key = inputKey,
-        hwid = HWID,
-        robloxUsername = USERNAME
-    })
-    
-    local req = (syn and syn.request) or (http and http.request) or (fluxus and fluxus.request) or request or http_request
-    if req then
-        local res = req({
-            Url = url,
-            Method = "POST",
-            Headers = { ["Content-Type"] = "application/json" },
-            Body = payload
-        })
-        if res and res.Body then
-            local ok, data = pcall(function() return HttpService:JSONDecode(res.Body) end)
-            if ok and data then return data end
-        end
-    end
-    
-    local ok, res = pcall(function()
-        return game:HttpGet(API_BASE .. "/validate-key?key=" .. inputKey .. "&hwid=" .. HWID .. "&username=" .. USERNAME)
-    end)
-    if ok and res then
-        local okDecode, data = pcall(function() return HttpService:JSONDecode(res) end)
-        if okDecode and data then return data end
-    end
-    
-    return { valid = false, message = "Gagal menghubungi server validasi." }
-end
-
-local function executeMainScript()
-    local scriptUrl = API_BASE .. "/get-script?name=main&raw=1"
-    local success, result = pcall(function()
-        local src = game:HttpGet(scriptUrl .. (scriptUrl:find("%?") and "&raw=1" or "?raw=1"))
-        if type(src) ~= "string" or src == "" then error("empty script body from server") end
-        local loader = loadstring or load
-        if type(loader) ~= "function" then error("executor missing loadstring/load") end
-        local fn, compileErr = loader(src, "=ArexansMainScript")
-        if type(fn) ~= "function" then error("compile error: " .. tostring(compileErr)) end
-        return fn()
-    end)
-    
-    if not success then
-        warn("[Arexans] Gagal memuat Main Script: " .. tostring(result))
-    end
-end
-
-if KEY ~= "" then
-    local res = validateKey(KEY)
-    if res and (res.valid or res.success) then
-        print("[Arexans] Key terverifikasi: " .. KEY)
-        executeMainScript()
-        return
-    end
-end
-
-print("[Arexans] Key System aktif. Silakan masukkan key lisensi Anda.")`,
-      backup_content: `-- Backup Key System Loader\n-- Disimpan sebagai cadangan aman`,
+      assetUrl: '/assets/aistudio/keysystem.lua',
     },
     {
       name: 'main',
-      display_name: 'Main Script',
-      description: 'Script utama berisi semua fitur tool Arexans',
+      display_name: 'Arexanstools.lua',
+      description: 'Script Utama Arexans Tools (Arexanstools.lua)',
       script_type: 'main',
-      is_active: true,
-      content: `-- ============================================================
--- AREXANS TOOLS — MAIN SCRIPT
--- Endpoint: /get-script?name=main
--- Script utama berisi fitur-fitur tool, UI hub, dan modul
--- ============================================================
-local HttpService = game:GetService("HttpService")
-local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
-local TweenService = game:GetService("TweenService")
-local UserInputService = game:GetService("UserInputService")
-
-local LocalPlayer = Players.LocalPlayer or Players.PlayerAdded:Wait()
-local Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
-
-print("[ArexansTools] Main script loaded successfully!")
-
--- Muat UI Library jika tersedia
-local UILibrary = nil
-pcall(function()
-    local libSrc = game:HttpGet("https://tools.arexans.my.id/api/get-script?name=library&raw=1")
-    if libSrc and libSrc ~= "" then
-        UILibrary = (loadstring or load)(libSrc, "=ArexansUILibrary")()
-    end
-end)
-
--- Hub Notification
-pcall(function()
-    game:GetService("StarterGui"):SetCore("SendNotification", {
-        Title = "Arexans Tools",
-        Text = "Main Script berhasil diaktifkan! Selamat bermain.",
-        Duration = 6
-    })
-end)
-
-_G.Arexans_Loaded = true`,
-      backup_content: `-- Backup Main Script\n-- Disimpan sebagai cadangan aman`,
+      assetUrl: '/assets/aistudio/Arexanstools.lua',
     },
     {
       name: 'library',
-      display_name: 'UI Library',
-      description: 'Library Lua untuk komponen UI yang dipakai bersama',
+      display_name: 'UILibrary.lua',
+      description: 'UI Library Komponen (UILibrary.lua)',
       script_type: 'library',
-      is_active: true,
-      content: `-- ============================================================
--- AREXANS TOOLS — UI LIBRARY
--- Endpoint: /get-script?name=library
--- Library komponen UI yang dipakai bersama (Windows, Tabs, Buttons)
--- ============================================================
-local UI = {}
-local CoreGui = game:GetService("CoreGui")
-local TweenService = game:GetService("TweenService")
-local UserInputService = game:GetService("UserInputService")
-
-UI.createWindow = function(title)
-    local ScreenGui = Instance.new("ScreenGui")
-    ScreenGui.Name = "ArexansUI_" .. tostring(math.random(1000, 9999))
-    ScreenGui.ResetOnSpawn = false
-    
-    pcall(function()
-        ScreenGui.Parent = CoreGui
-    end)
-    if not ScreenGui.Parent then
-        ScreenGui.Parent = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui")
-    end
-    
-    local MainFrame = Instance.new("Frame", ScreenGui)
-    MainFrame.Size = UDim2.new(0, 500, 0, 340)
-    MainFrame.Position = UDim2.new(0.5, -250, 0.5, -170)
-    MainFrame.BackgroundColor3 = Color3.fromRGB(20, 22, 30)
-    MainFrame.BorderSizePixel = 0
-    Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 10)
-    
-    local Title = Instance.new("TextLabel", MainFrame)
-    Title.Size = UDim2.new(1, -20, 0, 36)
-    Title.Position = UDim2.new(0, 15, 0, 0)
-    Title.BackgroundTransparency = 1
-    Title.Text = title or "Arexans Tools"
-    Title.TextColor3 = Color3.fromRGB(0, 220, 255)
-    Title.Font = Enum.Font.GothamBold
-    Title.TextSize = 16
-    Title.TextXAlignment = Enum.TextXAlignment.Left
-    
-    return {
-        Gui = ScreenGui,
-        Frame = MainFrame,
-        Destroy = function() ScreenGui:Destroy() end
-    }
-end
-
-UI.showNotification = function(text, duration)
-    pcall(function()
-        game:GetService("StarterGui"):SetCore("SendNotification", {
-            Title = "Arexans Tools",
-            Text = tostring(text or ""),
-            Duration = duration or 5
-        })
-    end)
-end
-
-return UI`,
-      backup_content: `-- Backup UI Library\n-- Disimpan sebagai cadangan aman`,
+      assetUrl: '/assets/aistudio/UILibrary.lua',
     },
     {
       name: 'game',
-      display_name: 'Game Script',
-      description: 'Script khusus per-game/map (fitur spesifik gameplay)',
+      display_name: 'games.lua',
+      description: 'Game Script Koleksi Game (games.lua)',
       script_type: 'game',
-      is_active: true,
-      content: `-- ============================================================
--- AREXANS TOOLS — GAME SCRIPT
--- Endpoint: /get-script?name=game
--- Script khusus per-game/map (fitur spesifik gameplay)
--- ============================================================
-local Players = game:GetService("Players")
-local LocalPlayer = Players.LocalPlayer or Players.PlayerAdded:Wait()
-
-print("[ArexansTools] Game Script initialized for PlaceId: " .. tostring(game.PlaceId))
-
-local GameFeatures = {
-    AutoFarm = false,
-    SpeedMultiplier = 1,
-    ESP = false
-}
-
-function GameFeatures:ToggleAutoFarm(enable)
-    self.AutoFarm = enable
-    print("[ArexansTools] AutoFarm: " .. tostring(enable))
-end
-
-return GameFeatures`,
-      backup_content: `-- Backup Game Script\n-- Disimpan sebagai cadangan aman`,
-    }
+      assetUrl: '/assets/aistudio/games.lua',
+    },
   ];
 
   const getCurrentDomain = () => {
@@ -406,22 +212,43 @@ return GameFeatures`,
     return SUPABASE_API_BASE;
   };
 
+  const fetchScriptAssetContent = async (meta: ScriptMeta): Promise<string> => {
+    try {
+      const res = await fetch(meta.assetUrl);
+      if (res.ok) {
+        const text = await res.text();
+        if (text && text.trim().length > 0) return text;
+      }
+    } catch {}
+
+    try {
+      const res2 = await fetch(`/api/get-script?name=${meta.name}`);
+      if (res2.ok) {
+        const text2 = await res2.text();
+        if (text2 && !text2.startsWith('warn(')) return text2;
+      }
+    } catch {}
+
+    return `-- ${meta.display_name}\n`;
+  };
+
   const restoreDefaultScripts = async () => {
     setLoading(true);
     try {
-      for (const def of DEFAULT_SCRIPTS_FALLBACK) {
+      for (const meta of SCRIPT_METAS) {
+        const content = await fetchScriptAssetContent(meta);
         await supabase.from('lua_scripts').upsert({
-          name: def.name,
-          display_name: def.display_name,
-          description: def.description,
-          content: def.content,
-          backup_content: def.backup_content,
-          script_type: def.script_type,
+          name: meta.name,
+          display_name: meta.display_name,
+          description: meta.description,
+          content: content,
+          backup_content: `-- Backup ${meta.display_name}\n` + content,
+          script_type: meta.script_type,
           is_active: true,
           updated_at: new Date().toISOString()
         } as any, { onConflict: 'name' });
       }
-      toast({ title: 'Berhasil', description: '4 Script Utama (keysystem, main, library, game) berhasil dipulihkan!' });
+      toast({ title: 'Berhasil', description: '4 Script Default (keysystem.lua, Arexanstools.lua, UILibrary.lua, games.lua) berhasil dipulihkan!' });
       await fetchScripts();
     } catch (e: any) {
       toast({ title: 'Gagal', description: e.message, variant: 'destructive' });
@@ -443,28 +270,35 @@ return GameFeatures`,
         console.warn('Failed to query lua_scripts, attempting auto-seeding:', error);
       }
 
-      // Jika data kosong atau ada script yang belum tersimpan, lakukan auto-seeding
-      const existingNames = new Set((data || []).map((s: any) => s.name?.toLowerCase()));
-      const missing = DEFAULT_SCRIPTS_FALLBACK.filter(d => !existingNames.has(d.name.toLowerCase()));
+      // Pastikan semua 4 script ada dan memiliki content lengkap dari asset
+      const scriptMap = new Map<string, any>((data || []).map((s: any) => [s.name?.toLowerCase(), s]));
+      let needsRefetch = false;
 
-      if (missing.length > 0) {
-        for (const item of missing) {
+      for (const meta of SCRIPT_METAS) {
+        const existing = scriptMap.get(meta.name.toLowerCase());
+        const hasFullContent = existing && existing.content && existing.content.length > 5000;
+        
+        if (!existing || !hasFullContent) {
           try {
+            const content = await fetchScriptAssetContent(meta);
             await supabase.from('lua_scripts').upsert({
-              name: item.name,
-              display_name: item.display_name,
-              description: item.description,
-              content: item.content,
-              backup_content: item.backup_content,
-              script_type: item.script_type,
+              name: meta.name,
+              display_name: meta.display_name,
+              description: meta.description,
+              content: content,
+              backup_content: `-- Backup ${meta.display_name}\n` + content,
+              script_type: meta.script_type,
               is_active: true,
               updated_at: new Date().toISOString()
             } as any, { onConflict: 'name' });
+            needsRefetch = true;
           } catch (upsertErr) {
             console.warn('Auto-seed insert error:', upsertErr);
           }
         }
+      }
 
+      if (needsRefetch) {
         const refetch = await supabase
           .from('lua_scripts')
           .select('*')
@@ -474,11 +308,14 @@ return GameFeatures`,
         }
       }
 
-      // Jika masih kosong (misal network error total), pakai fallback lokal langsung
+      // Jika masih kosong (misal offline/dev preview), buat fallback lokal
       if (!data || data.length === 0) {
-        data = DEFAULT_SCRIPTS_FALLBACK.map((d, i) => ({
+        data = SCRIPT_METAS.map((d, i) => ({
           ...d,
           id: `fallback-${d.name}-${i}`,
+          content: `-- ${d.display_name}`,
+          backup_content: `-- Backup ${d.display_name}`,
+          is_active: true,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString()
         })) as any;
@@ -498,19 +335,13 @@ return GameFeatures`,
       setBackupEdited(backup);
     } catch (error) {
       console.error('Failed to fetch scripts:', error);
-      // Fallback lokal agar halaman tidak pernah kosong
-      const fallbackList = DEFAULT_SCRIPTS_FALLBACK.map((d, i) => ({
-        ...d,
-        id: `fallback-${d.name}-${i}`,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      })) as any;
-      setScripts(fallbackList);
       toast({ title: 'Info', description: 'Script dimuat dengan data default Arexans Tools.' });
     } finally {
       setLoading(false);
     }
   };
+
+
 
   useEffect(() => {
     fetchScripts();
@@ -729,10 +560,10 @@ return GameFeatures`,
 
   const getScriptTypeLabel = (name: string) => {
     switch (name) {
-      case 'keysystem': return 'Keysystem Loader';
-      case 'main': return 'Main Script';
-      case 'library': return 'UI Library';
-      case 'game': return 'Game Script';
+      case 'keysystem': return 'keysystem.lua';
+      case 'main': return 'Arexanstools.lua';
+      case 'library': return 'UILibrary.lua';
+      case 'game': return 'games.lua';
       default: return name;
     }
   };
@@ -1187,27 +1018,27 @@ return GameFeatures`,
         <CardContent className="space-y-4 text-sm px-3 sm:px-6">
           <div className="grid gap-3 sm:gap-4 grid-cols-1 md:grid-cols-2 xl:grid-cols-4">
             <div className="p-2 sm:p-3 rounded bg-muted/30">
-              <h4 className="font-semibold text-primary mb-1 sm:mb-2 text-xs sm:text-sm">1. Keysystem Loader</h4>
+              <h4 className="font-semibold text-primary mb-1 sm:mb-2 text-xs sm:text-sm">1. keysystem.lua</h4>
               <p className="text-muted-foreground text-xs">
-                Endpoint: <code className="font-mono">/get-script?name=keysystem</code>. UI input key & validasi sebelum memuat Main Script.
+                Endpoint: <code className="font-mono">/get-script?name=keysystem</code> (atau <code className="font-mono">keysystem.lua</code>). Key system loader UI & validasi HWID.
               </p>
             </div>
             <div className="p-2 sm:p-3 rounded bg-muted/30">
-              <h4 className="font-semibold text-secondary mb-1 sm:mb-2 text-xs sm:text-sm">2. Main Script</h4>
+              <h4 className="font-semibold text-secondary mb-1 sm:mb-2 text-xs sm:text-sm">2. Arexanstools.lua</h4>
               <p className="text-muted-foreground text-xs">
-                Endpoint: <code className="font-mono">/get-script?name=main</code>. Script utama berisi semua fitur tool.
+                Endpoint: <code className="font-mono">/get-script?name=main</code> (atau <code className="font-mono">Arexanstools.lua</code>). Script utama berisi semua modul & fitur tool.
               </p>
             </div>
             <div className="p-2 sm:p-3 rounded bg-muted/30">
-              <h4 className="font-semibold text-cyan-400 mb-1 sm:mb-2 text-xs sm:text-sm">3. UI Library</h4>
+              <h4 className="font-semibold text-cyan-400 mb-1 sm:mb-2 text-xs sm:text-sm">3. UILibrary.lua</h4>
               <p className="text-muted-foreground text-xs">
-                Endpoint: <code className="font-mono">/get-script?name=library</code>. Library komponen UI yang dipakai bersama.
+                Endpoint: <code className="font-mono">/get-script?name=library</code> (atau <code className="font-mono">UILibrary.lua</code>). Library UI komponen tema, window, dan icon.
               </p>
             </div>
             <div className="p-2 sm:p-3 rounded bg-muted/30">
-              <h4 className="font-semibold text-emerald-400 mb-1 sm:mb-2 text-xs sm:text-sm">4. Game Script</h4>
+              <h4 className="font-semibold text-emerald-400 mb-1 sm:mb-2 text-xs sm:text-sm">4. games.lua</h4>
               <p className="text-muted-foreground text-xs">
-                Endpoint: <code className="font-mono">/get-script?name=game</code>. Script khusus per-game/map (fitur spesifik game).
+                Endpoint: <code className="font-mono">/get-script?name=game</code> (atau <code className="font-mono">games.lua</code>). Script hub game/map, script crack, dan explore.
               </p>
             </div>
           </div>

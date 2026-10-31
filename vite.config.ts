@@ -406,7 +406,16 @@ ${rawScript}`;
           }
 
           // Fallback to Cloud SQL lua_scripts table
-          const scriptQ = await pool.query('SELECT content FROM lua_scripts WHERE name = $1 LIMIT 1', [scriptId]);
+          const nameMap: Record<string, string> = {
+            'keysystem.lua': 'keysystem',
+            'arexanstools.lua': 'main',
+            'uilibrary.lua': 'library',
+            'games.lua': 'game',
+            'main.lua': 'main',
+            'game.lua': 'game',
+          };
+          const targetName = nameMap[scriptId.toLowerCase()] || scriptId;
+          const scriptQ = await pool.query('SELECT content FROM lua_scripts WHERE name = $1 OR name = $2 LIMIT 1', [targetName, scriptId]);
           if (scriptQ.rows.length > 0 && scriptQ.rows[0].content) {
             res.setHeader('Content-Type', 'text/plain; charset=utf-8');
             res.setHeader('Access-Control-Allow-Origin', '*');
