@@ -158,9 +158,9 @@ const OrderForm: FC<OrderFormProps> = ({
         }
       } catch {}
 
-      // Heartbeat check for phone (ArexansPay) with 60s threshold
+      // Heartbeat check for phone (ArexansPay) with 180s threshold (3 menit)
       const last = parseInt(map.developer_last_seen || '0', 10);
-      const isOnline = !!last && (Date.now() - last < 60 * 1000);
+      const isOnline = !!last && (Date.now() - last < 180 * 1000);
       if (developerOnline === undefined) {
         setPhoneOnline(isOnline);
       }

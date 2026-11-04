@@ -298,9 +298,8 @@ const Index = () => {
       const map = Object.fromEntries((data || []).map((r: any) => [r.key, r.value]));
       setGatewaySetting(map.payment_gateway || 'all');
       const last = parseInt(map.developer_last_seen || '0', 10);
-      // ArexansPay (Payment 1) HANYA online ketika HP admin online aktif data.
-      // Jika HP mati / data tidak aktif (> 60 detik tanpa heartbeat dari APK), status offline.
-      const STALE_MS = 60 * 1000;
+      // ArexansPay (Payment 1) online selama sinyal heartbeat aktif diterima (toleransi 3 menit / 180s)
+      const STALE_MS = 180 * 1000;
       setDeveloperOnline(Boolean(last) && (Date.now() - last < STALE_MS));
     };
 

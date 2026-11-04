@@ -470,9 +470,9 @@ export const PaymentGatewaySettings: FC<PaymentGatewaySettingsProps> = ({ onSett
   const isXmpEnabled = enabledGateways.includes('xmpayment');
   const isPoketoEnabled = enabledGateways.includes('poketo');
 
-  // Check admin device heartbeat for ArexansPay (Payment 1)
+  // Check admin device heartbeat for ArexansPay (Payment 1) - 180 detik (3 menit)
   const devLastSeen = parseInt(getValue('developer_last_seen', '0'), 10);
-  const isDevPhoneOnline = !!devLastSeen && (Date.now() - devLastSeen < 60 * 1000);
+  const isDevPhoneOnline = !!devLastSeen && (Date.now() - devLastSeen < 180 * 1000);
   const devSecondsAgo = devLastSeen ? Math.max(0, Math.round((Date.now() - devLastSeen) / 1000)) : null;
 
   let devDeviceInfo: any = null;

@@ -385,19 +385,47 @@ export async function handleFunctionsRequest(req: any, res: any): Promise<boolea
   const urlStr = req.url || '';
   const pathname = urlStr.split('?')[0] || '';
 
-  // Support both single /api/func and nested /api/device/heartbeat or /functions/v1/device-heartbeat
+  // Support /functions/v1/:name, /api/:name, and direct /dev-heartbeat, /heartbeat, etc.
+  let funcName = '';
   const subMatch = pathname.match(/^\/(?:functions\/v1|api)\/(.+)$/);
-  if (!subMatch) return false;
+  if (subMatch) {
+    const rawSubPath = subMatch[1].split('?')[0].replace(/\/+$/, '');
+    funcName = rawSubPath.replace(/\//g, '-');
+  } else {
+    const directMatch = pathname.match(/^\/([a-zA-Z0-9_\-\/]+)$/);
+    if (directMatch) {
+      const clean = directMatch[1].replace(/\/+$/, '').replace(/\//g, '-');
+      const supportedDirect = [
+        'dev-heartbeat',
+        'device-heartbeat',
+        'heartbeat',
+        'device-ping',
+        'ping',
+        'device-status',
+        'device-presence',
+        'get-heartbeat-url',
+        'dev-access-log',
+        'check-ip',
+        'check-payment',
+        'create-payment',
+        'cancel-payment',
+        'validate-key'
+      ];
+      if (supportedDirect.includes(clean)) {
+        funcName = clean;
+      }
+    }
+  }
 
-  const rawSubPath = subMatch[1].split('?')[0].replace(/\/+$/, '');
-  const funcName = rawSubPath.replace(/\//g, '-');
+  if (!funcName) return false;
+
   const pool = createPool();
   const searchParams = new URL(urlStr, 'http://localhost').searchParams;
   const method = req.method?.toUpperCase();
 
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Headers', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS');
 
   if (method === 'OPTIONS') {
     res.statusCode = 204;
@@ -496,10 +524,14 @@ export async function handleFunctionsRequest(req: any, res: any): Promise<boolea
       // HEARTBEAT / PRESENCE PERANGKAT AREXANSPAY APK
       // ==========================================
       if (
+        funcName === 'dev-heartbeat' ||
         funcName === 'device-heartbeat' || 
         funcName === 'heartbeat' || 
         funcName === 'device-ping' || 
-        funcName === 'ping'
+        funcName === 'ping' ||
+        funcName === 'arexanspay-heartbeat' ||
+        funcName === 'arexans-heartbeat' ||
+        funcName === 'dev-ping'
       ) {
         const clientIp = (req.headers['x-forwarded-for']?.split(',')[0]?.trim()) || req.socket?.remoteAddress || '127.0.0.1';
         const now = Date.now();
@@ -517,10 +549,12 @@ export async function handleFunctionsRequest(req: any, res: any): Promise<boolea
           res.setHeader('Content-Type', 'application/json');
           return res.end(JSON.stringify({
             success: true,
+            ok: true,
             status: 'offline',
             online: false,
             message: 'Status perangkat telah diset OFFLINE. Jalur 1 ArexansPay dinonaktifkan di web.',
             timestamp: now,
+            ts: now
           }));
         }
 
@@ -540,7 +574,7 @@ export async function handleFunctionsRequest(req: any, res: any): Promise<boolea
           last_seen: now,
         };
 
-        // 1. Simpan developer_last_seen timestamp
+        // 1. Simpan developer_last_seen timestamp (epoch ms)
         await pool.query(
           "INSERT INTO app_settings (id, key, value, updated_at) VALUES ('developer_last_seen', 'developer_last_seen', $1, now()) ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = now()",
           [now.toString()]
@@ -560,13 +594,48 @@ export async function handleFunctionsRequest(req: any, res: any): Promise<boolea
         res.setHeader('Content-Type', 'application/json');
         return res.end(JSON.stringify({
           success: true,
+          ok: true,
           status: 'online',
           online: true,
           message: 'Sinyal heartbeat ArexansPay APK berhasil diterima! Perangkat terdeteksi ONLINE di web.',
           timestamp: now,
+          ts: now,
           server_time: new Date().toISOString(),
-          timeout_threshold_seconds: 60,
+          timeout_threshold_seconds: 180,
           device: deviceInfo,
+        }));
+      }
+
+      // ==========================================
+      // GET HEARTBEAT URL (untuk Tasker, APK, Service Worker)
+      // ==========================================
+      if (funcName === 'get-heartbeat-url') {
+        const proto = req.headers['x-forwarded-proto'] || 'http';
+        const host = req.headers.host || 'localhost:3000';
+        const base = `${proto}://${host}`;
+
+        // Get or set default heartbeat token
+        const tokRes = await pool.query("SELECT value FROM app_settings WHERE key = 'dev_heartbeat_token' LIMIT 1");
+        let token = tokRes.rows[0]?.value;
+        if (!token) {
+          token = 'arexans_hb_' + Math.random().toString(36).substring(2, 10);
+          await pool.query(
+            "INSERT INTO app_settings (id, key, value, updated_at) VALUES ('dev_heartbeat_token', 'dev_heartbeat_token', $1, now()) ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = now()",
+            [token]
+          );
+        }
+
+        const url = `${base}/functions/v1/dev-heartbeat?token=${encodeURIComponent(token)}`;
+        const directUrl = `${base}/api/device/heartbeat`;
+
+        res.setHeader('Content-Type', 'application/json');
+        return res.end(JSON.stringify({
+          ok: true,
+          success: true,
+          url,
+          directUrl,
+          token,
+          curl_example: `curl -X POST "${url}" -H "Content-Type: application/json" -d '{"status":"online"}'`
         }));
       }
 
@@ -578,13 +647,15 @@ export async function handleFunctionsRequest(req: any, res: any): Promise<boolea
         funcName === 'device-presence'
       ) {
         const settingsRes = await pool.query(
-          "SELECT key, value FROM app_settings WHERE key IN ('developer_last_seen', 'arexanspay_device_info', 'developer_device_online')"
+          "SELECT key, value FROM app_settings WHERE key IN ('developer_last_seen', 'arexanspay_device_info', 'developer_device_online', 'heartbeat_timeout_seconds')"
         );
         const map: Record<string, string> = {};
         (settingsRes.rows || []).forEach((r: any) => { map[r.key] = r.value; });
 
         const lastSeen = parseInt(map.developer_last_seen || '0', 10);
-        const STALE_MS = 60 * 1000; // 60 detik tanpa sinyal = offline
+        // Timeout 180 detik (3 menit) agar tahan jeda background sync / Tasker Android
+        const timeoutSeconds = parseInt(map.heartbeat_timeout_seconds || '180', 10);
+        const STALE_MS = timeoutSeconds * 1000;
         const diffMs = Date.now() - lastSeen;
         const isOnline = Boolean(lastSeen) && diffMs < STALE_MS;
 
@@ -596,16 +667,62 @@ export async function handleFunctionsRequest(req: any, res: any): Promise<boolea
         res.setHeader('Content-Type', 'application/json');
         return res.end(JSON.stringify({
           success: true,
+          ok: true,
           online: isOnline,
           developer_online: isOnline,
           last_seen: lastSeen,
           last_seen_seconds_ago: lastSeen ? Math.round(diffMs / 1000) : null,
-          timeout_threshold_seconds: 60,
+          timeout_threshold_seconds: timeoutSeconds,
           device_info: deviceInfo || {
             device_name: 'HP Owner (ArexansPay APK)',
             status: isOnline ? 'online' : 'offline',
           },
         }));
+      }
+
+      // ==========================================
+      // DEVELOPER ACCESS LOG (dev-access-log)
+      // ==========================================
+      if (funcName === 'dev-access-log') {
+        const action = String(body?.action || 'log');
+        const clientIp = (req.headers['x-forwarded-for']?.split(',')[0]?.trim()) || req.socket?.remoteAddress || '127.0.0.1';
+
+        if (action === 'log') {
+          const event = ['visit', 'login_success', 'login_failed'].includes(String(body?.event))
+            ? String(body.event)
+            : 'visit';
+
+          await pool.query(
+            `INSERT INTO developer_access_logs (id, ip_address, event, device_id, device_name, user_agent, is_approved_device, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, now())`,
+            [
+              Math.random().toString(36).substring(2, 10) + '-' + Date.now(),
+              clientIp,
+              event,
+              body?.deviceId ? String(body.deviceId).slice(0, 120) : null,
+              body?.deviceName ? String(body.deviceName).slice(0, 200) : null,
+              (req.headers['user-agent'] || '').slice(0, 500),
+              body?.isApprovedDevice === true
+            ]
+          );
+          res.setHeader('Content-Type', 'application/json');
+          return res.end(JSON.stringify({ ok: true, success: true, ip: clientIp }));
+        }
+
+        if (action === 'list') {
+          const logsRes = await pool.query("SELECT * FROM developer_access_logs ORDER BY created_at DESC LIMIT 200");
+          res.setHeader('Content-Type', 'application/json');
+          return res.end(JSON.stringify({ ok: true, logs: logsRes.rows || [] }));
+        }
+
+        if (action === 'clear') {
+          await pool.query("DELETE FROM developer_access_logs");
+          res.setHeader('Content-Type', 'application/json');
+          return res.end(JSON.stringify({ ok: true }));
+        }
+
+        res.setHeader('Content-Type', 'application/json');
+        return res.end(JSON.stringify({ ok: true }));
       }
 
       async function fulfillTransaction(tx: any) {
