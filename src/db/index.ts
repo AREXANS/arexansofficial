@@ -262,7 +262,7 @@ export function saveDiskStore() {
   } catch {}
 }
 
-function getTables(): Map<string, any[]> {
+export function getTables(): Map<string, any[]> {
   if (!global._inMemoryTables) {
     global._inMemoryTables = new Map<string, any[]>();
     const saved = loadDiskStore();

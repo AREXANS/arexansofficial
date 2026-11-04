@@ -1,4 +1,4 @@
-import { createPool } from '../db/index.ts';
+import { createPool, getTables, saveDiskStore } from '../db/index.ts';
 
 // Helper to sanitize identifier names (table/column) to prevent SQL injection
 function sanitizeIdentifier(name: string): string {
@@ -409,7 +409,9 @@ export async function handleFunctionsRequest(req: any, res: any): Promise<boolea
         'check-payment',
         'create-payment',
         'cancel-payment',
-        'validate-key'
+        'validate-key',
+        'backup-database',
+        'restore-database'
       ];
       if (supportedDirect.includes(clean)) {
         funcName = clean;
@@ -723,6 +725,192 @@ export async function handleFunctionsRequest(req: any, res: any): Promise<boolea
 
         res.setHeader('Content-Type', 'application/json');
         return res.end(JSON.stringify({ ok: true }));
+      }
+
+      // ==========================================
+      // BACKUP DATABASE
+      // ==========================================
+      if (funcName === 'backup-database') {
+        const tablesParam = searchParams.get('tables') || '';
+        const targetTables = tablesParam && tablesParam !== '*'
+          ? tablesParam.split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
+          : Array.from(ALLOWED_TABLES);
+
+        const tablesResult: Record<string, any[]> = {};
+        const tableCounts: Record<string, number> = {};
+
+        for (const tbl of targetTables) {
+          if (!ALLOWED_TABLES.has(tbl)) continue;
+          try {
+            const q = await pool.query(`SELECT * FROM ${sanitizeIdentifier(tbl)}`);
+            tablesResult[tbl] = q.rows || [];
+            tableCounts[tbl] = (q.rows || []).length;
+          } catch (e: any) {
+            console.warn(`Error backing up table ${tbl}:`, e?.message);
+            tablesResult[tbl] = [];
+            tableCounts[tbl] = 0;
+          }
+        }
+
+        res.setHeader('Content-Type', 'application/json');
+        return res.end(JSON.stringify({
+          success: true,
+          ok: true,
+          exportedAt: new Date().toISOString(),
+          tables: tablesResult,
+          tableCounts,
+          version: '2.0',
+        }));
+      }
+
+      // ==========================================
+      // RESTORE DATABASE
+      // ==========================================
+      if (funcName === 'restore-database') {
+        const rawTables = body?.tables || body?.data || body;
+        const mode = (body?.mode || 'merge').toLowerCase() as 'merge' | 'replace';
+
+        if (!rawTables || typeof rawTables !== 'object') {
+          res.statusCode = 400;
+          res.setHeader('Content-Type', 'application/json');
+          return res.end(JSON.stringify({ error: 'Format data backup tidak valid.' }));
+        }
+
+        const results: Record<string, { inserted: number; skipped: number; errors: string[] }> = {};
+        const memTables = getTables();
+
+        const orderedTables = [
+          'app_settings',
+          'packages',
+          'ads',
+          'backgrounds',
+          'social_links',
+          'admin_sessions',
+          'lua_scripts',
+          'package_discounts',
+          'xcoins_balances',
+          'xcoins_otp',
+          'xcoins_transactions',
+          'transactions',
+          'duration_codes',
+          'blocked_ips',
+          'developer_access_logs',
+          'lua_teleports',
+          'lua_recordings',
+          'lua_recording_events',
+          'lua_script_versions'
+        ];
+
+        const presentKeys = new Set(Object.keys(rawTables).map(k => k.toLowerCase()));
+        const tablesToProcess: string[] = [];
+        for (const t of orderedTables) {
+          if (presentKeys.has(t)) tablesToProcess.push(t);
+        }
+        for (const k of Object.keys(rawTables)) {
+          const lk = k.toLowerCase();
+          if (ALLOWED_TABLES.has(lk) && !tablesToProcess.includes(lk)) {
+            tablesToProcess.push(lk);
+          }
+        }
+
+        for (const tbl of tablesToProcess) {
+          const matchingKey = Object.keys(rawTables).find(k => k.toLowerCase() === tbl) || tbl;
+          const rows = rawTables[matchingKey];
+          if (!Array.isArray(rows)) continue;
+
+          const tblRes = { inserted: 0, skipped: 0, errors: [] as string[] };
+
+          // In replace mode, clear table first (safeguarding essential settings)
+          if (mode === 'replace') {
+            try {
+              if (tbl === 'app_settings') {
+                await pool.query(
+                  "DELETE FROM app_settings WHERE key NOT IN ('admin_key', 'arexanspay_api_key', 'arexanspay_qris_id', 'arexanspay_webhook_key')"
+                );
+              } else {
+                await pool.query(`DELETE FROM ${sanitizeIdentifier(tbl)}`);
+              }
+            } catch (delErr: any) {
+              tblRes.errors.push(`Gagal mengosongkan tabel ${tbl}: ${delErr.message}`);
+            }
+          }
+
+          for (const rawRow of rows) {
+            if (!rawRow || typeof rawRow !== 'object') {
+              tblRes.skipped++;
+              continue;
+            }
+
+            const row = { ...rawRow };
+            if (tbl === 'app_settings') {
+              if (!row.key && row.setting_key) row.key = row.setting_key;
+              if (row.value === undefined && row.setting_value !== undefined) row.value = row.setting_value;
+              if (!row.id && row.key) row.id = row.key;
+            } else if (tbl === 'transactions') {
+              if (!row.customer_name && row.key_name) row.customer_name = row.key_name;
+              if (row.package_duration === undefined && row.duration_days !== undefined) row.package_duration = Number(row.duration_days);
+              if (row.total_amount === undefined && row.amount !== undefined) row.total_amount = Number(row.amount);
+              if (!row.license_key && row.key_name) row.license_key = row.key_name;
+            } else if (tbl === 'xcoins_balances') {
+              if (!row.phone && row.phone_number) row.phone = row.phone_number;
+            }
+
+            if (!row.id) {
+              row.id = row.key || `gen_${Math.random().toString(36).substring(2, 10)}_${Date.now()}`;
+            }
+
+            try {
+              const cols = Object.keys(row);
+              const colNames = cols.map(c => sanitizeIdentifier(c)).join(', ');
+              const placeholders = cols.map((_, i) => `$${i + 1}`).join(', ');
+              const values = cols.map(c => row[c]);
+
+              const conflictTarget = tbl === 'app_settings' ? 'key' : 'id';
+              const updateCols = cols
+                .filter(c => c !== conflictTarget && c !== 'id')
+                .map(c => `${sanitizeIdentifier(c)} = EXCLUDED.${sanitizeIdentifier(c)}`)
+                .join(', ');
+
+              const onConflictSql = updateCols
+                ? `ON CONFLICT (${sanitizeIdentifier(conflictTarget)}) DO UPDATE SET ${updateCols}`
+                : `ON CONFLICT (${sanitizeIdentifier(conflictTarget)}) DO NOTHING`;
+
+              const sql = `INSERT INTO ${sanitizeIdentifier(tbl)} (${colNames}) VALUES (${placeholders}) ${onConflictSql}`;
+              await pool.query(sql, values);
+              tblRes.inserted++;
+            } catch (insErr: any) {
+              // Direct fallback into in-memory table
+              try {
+                const targetList = memTables.get(tbl) || [];
+                const conflictTarget = tbl === 'app_settings' ? 'key' : 'id';
+                const exIdx = targetList.findIndex(it => it[conflictTarget] === row[conflictTarget]);
+                if (exIdx >= 0) {
+                  targetList[exIdx] = { ...targetList[exIdx], ...row, updated_at: new Date().toISOString() };
+                } else {
+                  targetList.push(row);
+                }
+                memTables.set(tbl, targetList);
+                tblRes.inserted++;
+              } catch (innerErr: any) {
+                tblRes.errors.push(`Row ${row.id || 'unknown'}: ${insErr.message}`);
+                tblRes.skipped++;
+              }
+            }
+          }
+
+          results[tbl] = tblRes;
+        }
+
+        saveDiskStore();
+
+        res.setHeader('Content-Type', 'application/json');
+        return res.end(JSON.stringify({
+          success: true,
+          ok: true,
+          mode,
+          restoredAt: new Date().toISOString(),
+          results,
+        }));
       }
 
       async function fulfillTransaction(tx: any) {
