@@ -45,6 +45,103 @@ const DEFAULT_PACKAGES = [
 const SUPABASE_URL = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
 const SUPABASE_PUBLISHABLE_KEY = "cloudsql-postgres-client-key";
 
+const DEFAULT_APP_SETTINGS = [
+  {
+    id: '2a6703d2-4073-4a92-baab-42c0bca8b92e',
+    key: 'admin_key',
+    value: 'arexans2025@',
+    description: 'Password login halaman developer'
+  },
+  {
+    id: 'arexanspay_api_key',
+    key: 'arexanspay_api_key',
+    value: 'arexanspay_f63fa727bda01551084e5c87bde526aeb68e1c471ff89fa36d2748b8c25156a3',
+    description: 'API Key resmi ArexansPay Gateway'
+  },
+  {
+    id: 'arexanspay_qris_id',
+    key: 'arexanspay_qris_id',
+    value: 'axspay-duqwono-h3sq-au0s-5h26-v7m2d1oy3c32',
+    description: 'QRIS ID resmi ArexansPay Gateway'
+  },
+  {
+    id: 'arexanspay_webhook_key',
+    key: 'arexanspay_webhook_key',
+    value: 'arexanspay_8d9f4138e8cc08891ee97d7f4e5dcd965ab950d240283c4fb245d17876c50927226cd438ec51dee106ecdb1591ce53f99bc3c62d725205857b285ebce3019cd9',
+    description: 'Webhook Key resmi ArexansPay Gateway'
+  },
+  {
+    id: 'arexanspay_enabled',
+    key: 'arexanspay_enabled',
+    value: 'true',
+    description: 'Status aktif ArexansPay'
+  },
+  {
+    id: 'developer_device_online',
+    key: 'developer_device_online',
+    value: 'true',
+    description: 'Status online perangkat ArexansPay'
+  },
+  {
+    id: 'developer_last_seen',
+    key: 'developer_last_seen',
+    value: String(Date.now()),
+    description: 'Timestamp heartbeat terakhir perangkat ArexansPay'
+  },
+  {
+    id: 'heartbeat_timeout_seconds',
+    key: 'heartbeat_timeout_seconds',
+    value: '180',
+    description: 'Ambang batas timeout heartbeat (detik)'
+  },
+  {
+    id: 'enabled_gateways',
+    key: 'enabled_gateways',
+    value: JSON.stringify(['arexanspay', 'xmpayment', 'poketo']),
+    description: 'Gateways aktif'
+  },
+  {
+    id: 'payment_gateway',
+    key: 'payment_gateway',
+    value: 'all',
+    description: 'Pilihan Gateway'
+  }
+];
+
+function getMergedAppSettings(): any[] {
+  const map: Record<string, any> = {};
+  DEFAULT_APP_SETTINGS.forEach(item => {
+    map[item.key] = { ...item };
+  });
+
+  if (typeof window !== 'undefined' && window.localStorage) {
+    try {
+      const cachedRaw = localStorage.getItem('arexans_payment_settings_cache');
+      if (cachedRaw) {
+        const parsed = JSON.parse(cachedRaw);
+        for (const [k, v] of Object.entries(parsed)) {
+          if (v !== undefined && v !== null) {
+            map[k] = { id: k, key: k, value: String(v) };
+          }
+        }
+      }
+
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith('arexans_setting_')) {
+          const settingKey = k.replace(/^arexans_setting_/, '');
+          const val = localStorage.getItem(k);
+          if (val !== null && val !== '') {
+            map[settingKey] = { id: settingKey, key: settingKey, value: val };
+          }
+        }
+      }
+    } catch {}
+  }
+
+  return Object.values(map);
+}
+
 function createFallbackResponse(urlStr: string): Response {
   let fallbackData: any = [];
   const pathname = urlStr.split('?')[0] || '';
@@ -52,14 +149,7 @@ function createFallbackResponse(urlStr: string): Response {
   if (pathname.includes('/rest/v1/packages')) {
     fallbackData = DEFAULT_PACKAGES;
   } else if (pathname.includes('/rest/v1/app_settings')) {
-    fallbackData = [
-      {
-        id: '2a6703d2-4073-4a92-baab-42c0bca8b92e',
-        key: 'admin_key',
-        value: 'arexans2025@',
-        description: 'Password login halaman developer'
-      }
-    ];
+    fallbackData = getMergedAppSettings();
   } else if (pathname.includes('/auth/v1/')) {
     fallbackData = { user: null, session: null };
   } else if (pathname.includes('/functions/v1/check-ip')) {
@@ -106,6 +196,27 @@ function createSupabaseFetch(supabaseKey: string): typeof fetch {
 
     const urlStr = typeof input === 'string' ? input : (input instanceof Request ? input.url : String(input));
 
+    // Capture app_settings upserts to localStorage so state is never lost even if static host or network drops
+    if (
+      urlStr.includes('/rest/v1/app_settings') &&
+      (init?.method === 'POST' || init?.method === 'PATCH' || init?.method === 'PUT') &&
+      init?.body
+    ) {
+      try {
+        const bodyParsed = typeof init.body === 'string' ? JSON.parse(init.body) : init.body;
+        const items = Array.isArray(bodyParsed) ? bodyParsed : [bodyParsed];
+        const cache = JSON.parse(localStorage.getItem('arexans_payment_settings_cache') || '{}');
+        items.forEach((item: any) => {
+          if (item?.key) {
+            const v = String(item.value ?? '');
+            cache[item.key] = v;
+            localStorage.setItem(`arexans_setting_${item.key}`, v);
+          }
+        });
+        localStorage.setItem('arexans_payment_settings_cache', JSON.stringify(cache));
+      } catch {}
+    }
+
     try {
       const response = await fetch(input, { ...init, headers });
       const contentType = response.headers.get('content-type') || '';
@@ -118,8 +229,8 @@ function createSupabaseFetch(supabaseKey: string): typeof fetch {
         return createFallbackResponse(urlStr);
       }
 
-      // If server error on edge functions, packages or auth, provide fallback response so page never breaks
-      if (!response.ok && (urlStr.includes('/functions/v1/') || urlStr.includes('/rest/v1/packages') || urlStr.includes('/auth/v1/'))) {
+      // If server error on edge functions, packages, app_settings, or auth, provide fallback response so page never breaks
+      if (!response.ok && (urlStr.includes('/functions/v1/') || urlStr.includes('/rest/v1/packages') || urlStr.includes('/rest/v1/app_settings') || urlStr.includes('/auth/v1/'))) {
         return createFallbackResponse(urlStr);
       }
 

@@ -45,7 +45,19 @@
   ],
   "rewrites": [
     {
-      "source": "/((?!assets|images|favicon|robots).*)",
+      "source": "/functions/v1/dev-heartbeat",
+      "destination": "/api/device/heartbeat"
+    },
+    {
+      "source": "/api/heartbeat",
+      "destination": "/api/device/heartbeat"
+    },
+    {
+      "source": "/api/dev-heartbeat",
+      "destination": "/api/device/heartbeat"
+    },
+    {
+      "source": "/((?!api|assets|images|favicon|robots).*)",
       "destination": "/index.html"
     }
   ]

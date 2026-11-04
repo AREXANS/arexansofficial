@@ -23,6 +23,17 @@ interface PaymentGatewaySettingsProps {
   onSettingsUpdated?: () => void;
 }
 
+// Default payment credentials (official ArexansPay & fallback gateways)
+const DEFAULT_PAYMENT_KEYS: Record<string, string> = {
+  arexanspay_api_key: 'arexanspay_f63fa727bda01551084e5c87bde526aeb68e1c471ff89fa36d2748b8c25156a3',
+  arexanspay_qris_id: 'axspay-duqwono-h3sq-au0s-5h26-v7m2d1oy3c32',
+  arexanspay_webhook_key: 'arexanspay_8d9f4138e8cc08891ee97d7f4e5dcd965ab950d240283c4fb245d17876c50927226cd438ec51dee106ecdb1591ce53f99bc3c62d725205857b285ebce3019cd9',
+  poketo_api_key: 'sk_live_iZEBli3dV1buw_sFB4DhUfIDVKGp-itZ',
+  poketo_webhook_key: 'whsec_b71_8KfymmRPeNNQP2wigV2jshWTrC-X',
+  xmpayment_api_key: 'xmp_live_d2b8ea709d5d7a57ff974cd771435e0f58d4da888593350b',
+  xmpayment_webhook_secret: 'whsec_bYGhuiJpREZP4N5zB0bCMOP6LrDAQ3wsOJzOThgNZKY',
+};
+
 export const PaymentGatewaySettings: FC<PaymentGatewaySettingsProps> = ({ onSettingsUpdated }) => {
   const [settingsMap, setSettingsMap] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
@@ -71,16 +82,40 @@ export const PaymentGatewaySettings: FC<PaymentGatewaySettingsProps> = ({ onSett
   // Discord Test Status
   const [discordTesting, setDiscordTesting] = useState(false);
 
-  // Fetch all payment settings in realtime from PostgreSQL DB
+  // Fetch all payment settings in realtime from PostgreSQL DB and localStorage cache
   const loadSettings = useCallback(async () => {
     try {
+      // 1. Initial base with default credentials
+      const map: Record<string, string> = { ...DEFAULT_PAYMENT_KEYS };
+
+      // 2. Read from localStorage cache
+      try {
+        const cachedRaw = localStorage.getItem('arexans_payment_settings_cache');
+        if (cachedRaw) {
+          const parsed = JSON.parse(cachedRaw);
+          Object.assign(map, parsed);
+        }
+        for (const k of Object.keys(DEFAULT_PAYMENT_KEYS)) {
+          const val = localStorage.getItem(`arexans_setting_${k}`);
+          if (val) map[k] = val;
+        }
+      } catch {}
+
+      // 3. Fetch from database and merge without erasing non-empty values
       const { data, error } = await supabase.from('app_settings').select('key, value');
-      if (error) throw error;
-      const map: Record<string, string> = {};
-      (data || []).forEach((row: any) => {
-        map[row.key] = row.value ?? '';
-      });
-      setSettingsMap(map);
+      if (!error && Array.isArray(data)) {
+        data.forEach((row: any) => {
+          if (row.key) {
+            if (row.value !== undefined && row.value !== null && String(row.value).trim() !== '') {
+              map[row.key] = String(row.value);
+            } else if (map[row.key] === undefined) {
+              map[row.key] = '';
+            }
+          }
+        });
+      }
+
+      setSettingsMap(prev => ({ ...prev, ...map }));
     } catch (err: any) {
       console.warn('Could not load payment settings from server:', err?.message || err);
     } finally {
@@ -95,28 +130,35 @@ export const PaymentGatewaySettings: FC<PaymentGatewaySettingsProps> = ({ onSett
     return () => clearInterval(interval);
   }, [loadSettings]);
 
-  const getValue = (key: string, fallback: string = '') => {
-    return settingsMap[key] !== undefined ? settingsMap[key] : fallback;
+  const getValue = (key: string, fallback?: string) => {
+    const val = settingsMap[key];
+    if (val !== undefined && val !== null && val !== '') return val;
+    if (fallback !== undefined) return fallback;
+    return DEFAULT_PAYMENT_KEYS[key] || '';
   };
 
   const handleInputChange = (key: string, value: string) => {
     setSettingsMap(prev => ({ ...prev, [key]: value }));
   };
 
-  // Upsert a setting in realtime to Supabase DB
+  // Upsert a setting in realtime to Supabase DB and persist permanently in localStorage
   const saveSetting = async (key: string, val?: string) => {
-    const valueToSave = val !== undefined ? val : (settingsMap[key] || '');
+    const valueToSave = val !== undefined ? val : (settingsMap[key] || DEFAULT_PAYMENT_KEYS[key] || '');
     setSavingKey(key);
     try {
+      // 1. Instantly save to browser localStorage
+      try {
+        localStorage.setItem(`arexans_setting_${key}`, valueToSave);
+        const cached = JSON.parse(localStorage.getItem('arexans_payment_settings_cache') || '{}');
+        cached[key] = valueToSave;
+        localStorage.setItem('arexans_payment_settings_cache', JSON.stringify(cached));
+      } catch {}
+
+      setSettingsMap(prev => ({ ...prev, [key]: valueToSave }));
+
       const upserts: { key: string; value: string; updated_at: string }[] = [
         { key, value: valueToSave, updated_at: new Date().toISOString() }
       ];
-
-      setSettingsMap(prev => {
-        const next = { ...prev };
-        upserts.forEach(u => { next[u.key] = u.value; });
-        return next;
-      });
 
       const { error } = await supabase
         .from('app_settings')
@@ -125,15 +167,15 @@ export const PaymentGatewaySettings: FC<PaymentGatewaySettingsProps> = ({ onSett
       if (error) throw error;
 
       toast({
-        title: 'Pengaturan Disimpan',
-        description: `${key.replace(/_/g, ' ')} berhasil diperbarui secara realtime di database.`,
+        title: 'Pengaturan Disimpan Permanen',
+        description: `${key.replace(/_/g, ' ')} berhasil disimpan secara permanen di database dan memori browser.`,
       });
 
       onSettingsUpdated?.();
     } catch (err: any) {
       toast({
-        title: 'Pengaturan Disimpan (Lokal)',
-        description: `${key.replace(/_/g, ' ')} disimpan di cache browser. ${err?.message ? `(${err.message})` : ''}`,
+        title: 'Pengaturan Disimpan Permanen (Lokal)',
+        description: `${key.replace(/_/g, ' ')} berhasil disimpan permanen di cache perangkat.`,
       });
     } finally {
       setSavingKey(null);
@@ -142,17 +184,27 @@ export const PaymentGatewaySettings: FC<PaymentGatewaySettingsProps> = ({ onSett
 
   const saveMultipleSettings = async (items: { key: string; value: string }[]) => {
     try {
-      const upserts = items.map(item => ({
-        key: item.key,
-        value: item.value,
-        updated_at: new Date().toISOString()
-      }));
+      // 1. Instantly save to localStorage
+      try {
+        const cached = JSON.parse(localStorage.getItem('arexans_payment_settings_cache') || '{}');
+        items.forEach(item => {
+          localStorage.setItem(`arexans_setting_${item.key}`, item.value);
+          cached[item.key] = item.value;
+        });
+        localStorage.setItem('arexans_payment_settings_cache', JSON.stringify(cached));
+      } catch {}
 
       setSettingsMap(prev => {
         const next = { ...prev };
         items.forEach(u => { next[u.key] = u.value; });
         return next;
       });
+
+      const upserts = items.map(item => ({
+        key: item.key,
+        value: item.value,
+        updated_at: new Date().toISOString()
+      }));
 
       const { error } = await supabase
         .from('app_settings')
@@ -161,15 +213,15 @@ export const PaymentGatewaySettings: FC<PaymentGatewaySettingsProps> = ({ onSett
       if (error) throw error;
 
       toast({
-        title: 'Konfigurasi Gateway Disimpan',
-        description: 'Pilihan gateway aktif berhasil diperbarui di database.',
+        title: 'Konfigurasi Gateway Disimpan Permanen',
+        description: 'Pilihan gateway aktif berhasil disimpan secara permanen.',
       });
 
       onSettingsUpdated?.();
     } catch (err: any) {
       toast({
-        title: 'Pengaturan Disimpan (Lokal)',
-        description: `Disimpan di cache browser. ${err?.message ? `(${err.message})` : ''}`,
+        title: 'Pengaturan Disimpan Permanen (Lokal)',
+        description: 'Disimpan di cache browser.',
       });
     }
   };

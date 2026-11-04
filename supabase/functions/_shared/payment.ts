@@ -81,9 +81,9 @@ export async function loadPaymentConfig(supabase: any): Promise<PaymentConfig> {
   if (gateway === "cashify" || gateway === "casaku") gateway = "arexanspay";
   if (gateway === "pakasir") gateway = "xmpayment"; // seamless migration
 
-  const apiKey = pick("arexanspay_api_key", "arexanspay_license_key", "casaku_license_key", "cashify_license_key");
-  const qrisId = pick("arexanspay_qris_id", "casaku_qris_id", "cashify_qris_id");
-  const webhookKey = pick("arexanspay_webhook_key", "casaku_webhook_key", "casaku_webhook_secret", "cashify_webhook_key");
+  const apiKey = pick("arexanspay_api_key", "arexanspay_license_key", "casaku_license_key", "cashify_license_key") || "arexanspay_f63fa727bda01551084e5c87bde526aeb68e1c471ff89fa36d2748b8c25156a3";
+  const qrisId = pick("arexanspay_qris_id", "casaku_qris_id", "cashify_qris_id") || "axspay-duqwono-h3sq-au0s-5h26-v7m2d1oy3c32";
+  const webhookKey = pick("arexanspay_webhook_key", "casaku_webhook_key", "casaku_webhook_secret", "cashify_webhook_key") || "arexanspay_8d9f4138e8cc08891ee97d7f4e5dcd965ab950d240283c4fb245d17876c50927226cd438ec51dee106ecdb1591ce53f99bc3c62d725205857b285ebce3019cd9";
 
   const xmpApiKey = pick("xmpayment_api_key", "xmp_api_key") || DEFAULT_XMP_API_KEY;
   const xmpWebhookSecret = pick("xmpayment_webhook_secret", "xmp_webhook_secret") || DEFAULT_XMP_WEBHOOK_SECRET;

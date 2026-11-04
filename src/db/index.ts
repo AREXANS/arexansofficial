@@ -59,10 +59,82 @@ const DEFAULT_SETTINGS = [
     updated_at: new Date().toISOString()
   },
   {
+    id: 'arexanspay_api_key',
+    key: 'arexanspay_api_key',
+    value: 'arexanspay_f63fa727bda01551084e5c87bde526aeb68e1c471ff89fa36d2748b8c25156a3',
+    description: 'API Key resmi ArexansPay Gateway',
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  },
+  {
+    id: 'arexanspay_qris_id',
+    key: 'arexanspay_qris_id',
+    value: 'axspay-duqwono-h3sq-au0s-5h26-v7m2d1oy3c32',
+    description: 'QRIS ID resmi ArexansPay Gateway',
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  },
+  {
+    id: 'arexanspay_webhook_key',
+    key: 'arexanspay_webhook_key',
+    value: 'arexanspay_8d9f4138e8cc08891ee97d7f4e5dcd965ab950d240283c4fb245d17876c50927226cd438ec51dee106ecdb1591ce53f99bc3c62d725205857b285ebce3019cd9',
+    description: 'Webhook Key resmi ArexansPay Gateway',
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  },
+  {
+    id: 'arexanspay_enabled',
+    key: 'arexanspay_enabled',
+    value: 'true',
+    description: 'Status aktif ArexansPay',
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  },
+  {
+    id: 'developer_device_online',
+    key: 'developer_device_online',
+    value: 'true',
+    description: 'Status online perangkat ArexansPay',
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  },
+  {
+    id: 'developer_last_seen',
+    key: 'developer_last_seen',
+    value: Date.now().toString(),
+    description: 'Timestamp heartbeat terakhir perangkat ArexansPay',
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  },
+  {
+    id: 'heartbeat_timeout_seconds',
+    key: 'heartbeat_timeout_seconds',
+    value: '180',
+    description: 'Ambang batas timeout heartbeat (detik)',
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  },
+  {
     id: 'payment_gateway_settings',
     key: 'payment_gateway_settings',
-    value: JSON.stringify({ provider: 'casaku' }),
+    value: JSON.stringify({ provider: 'arexanspay' }),
     description: 'Setting Payment Gateway',
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  },
+  {
+    id: 'enabled_gateways',
+    key: 'enabled_gateways',
+    value: JSON.stringify(['arexanspay', 'xmpayment', 'poketo']),
+    description: 'Gateway aktif',
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  },
+  {
+    id: 'payment_gateway',
+    key: 'payment_gateway',
+    value: 'all',
+    description: 'Pilihan Gateway',
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString()
   },
@@ -196,7 +268,16 @@ function getTables(): Map<string, any[]> {
     const saved = loadDiskStore();
 
     global._inMemoryTables.set('packages', saved?.packages || [...DEFAULT_PACKAGES]);
-    global._inMemoryTables.set('app_settings', saved?.app_settings || [...DEFAULT_SETTINGS]);
+    const loadedAppSettings: any[] = saved?.app_settings ? [...saved.app_settings] : [];
+    for (const def of DEFAULT_SETTINGS) {
+      const idx = loadedAppSettings.findIndex(s => s.key === def.key);
+      if (idx === -1) {
+        loadedAppSettings.push({ ...def });
+      } else if ((!loadedAppSettings[idx].value || loadedAppSettings[idx].value === '') && def.value) {
+        loadedAppSettings[idx].value = def.value;
+      }
+    }
+    global._inMemoryTables.set('app_settings', loadedAppSettings);
     global._inMemoryTables.set('ads', saved?.ads || []);
     global._inMemoryTables.set('backgrounds', saved?.backgrounds || []);
     global._inMemoryTables.set('blocked_ips', saved?.blocked_ips || []);

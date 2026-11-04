@@ -1,4 +1,181 @@
 {
+  "packages": [
+    {
+      "id": "f4e2af14-c91e-4259-944f-21876e6deba8",
+      "name": "NORMAL",
+      "display_name": "Normal",
+      "price_per_day": 2000,
+      "description": "Paket standar",
+      "features": [
+        "Fitur dasar",
+        "Update rutin"
+      ],
+      "is_active": true,
+      "sort_order": 1,
+      "created_at": "2026-11-04T07:51:56.863Z",
+      "updated_at": "2026-11-04T07:51:56.864Z"
+    },
+    {
+      "id": "305482a0-5a57-449d-bb70-5af8470505ab",
+      "name": "VIP",
+      "display_name": "VIP",
+      "price_per_day": 3500,
+      "description": "Paket VIP",
+      "features": [
+        "Semua fitur Normal",
+        "Fitur VIP eksklusif",
+        "Prioritas support"
+      ],
+      "is_active": true,
+      "sort_order": 2,
+      "created_at": "2026-11-04T07:51:56.864Z",
+      "updated_at": "2026-11-04T07:51:56.864Z"
+    },
+    {
+      "id": "d4e2f040-5e06-4d13-ab0a-3601bc7bdd8a",
+      "name": "LIFETIME",
+      "display_name": "Lifetime",
+      "price_per_day": 700000,
+      "description": "Akses permanen",
+      "features": [
+        "Semua fitur VIP",
+        "Akses selamanya"
+      ],
+      "is_active": true,
+      "sort_order": 3,
+      "created_at": "2026-11-04T07:51:56.864Z",
+      "updated_at": "2026-11-04T07:51:56.864Z"
+    }
+  ],
+  "app_settings": [
+    {
+      "id": "2a6703d2-4073-4a92-baab-42c0bca8b92e",
+      "key": "admin_key",
+      "value": "arexans2025@",
+      "description": "Password login halaman developer",
+      "created_at": "2026-11-04T07:51:56.864Z",
+      "updated_at": "2026-11-04T07:51:56.864Z"
+    },
+    {
+      "id": "arexanspay_api_key",
+      "key": "arexanspay_api_key",
+      "value": "arexanspay_f63fa727bda01551084e5c87bde526aeb68e1c471ff89fa36d2748b8c25156a3",
+      "description": "API Key resmi ArexansPay Gateway",
+      "created_at": "2026-11-04T07:51:56.864Z",
+      "updated_at": "2026-11-04T07:51:56.864Z"
+    },
+    {
+      "id": "arexanspay_qris_id",
+      "key": "arexanspay_qris_id",
+      "value": "axspay-duqwono-h3sq-au0s-5h26-v7m2d1oy3c32",
+      "description": "QRIS ID resmi ArexansPay Gateway",
+      "created_at": "2026-11-04T07:51:56.864Z",
+      "updated_at": "2026-11-04T07:51:56.864Z"
+    },
+    {
+      "id": "arexanspay_webhook_key",
+      "key": "arexanspay_webhook_key",
+      "value": "arexanspay_8d9f4138e8cc08891ee97d7f4e5dcd965ab950d240283c4fb245d17876c50927226cd438ec51dee106ecdb1591ce53f99bc3c62d725205857b285ebce3019cd9",
+      "description": "Webhook Key resmi ArexansPay Gateway",
+      "created_at": "2026-11-04T07:51:56.864Z",
+      "updated_at": "2026-11-04T07:51:56.864Z"
+    },
+    {
+      "id": "arexanspay_enabled",
+      "key": "arexanspay_enabled",
+      "value": "true",
+      "description": "Status aktif ArexansPay",
+      "created_at": "2026-11-04T07:51:56.864Z",
+      "updated_at": "2026-11-04T07:51:56.864Z"
+    },
+    {
+      "id": "developer_device_online",
+      "key": "developer_device_online",
+      "value": "true",
+      "description": "Status online perangkat ArexansPay",
+      "created_at": "2026-11-04T07:52:04.020Z",
+      "updated_at": "2026-11-04T07:52:04.020Z"
+    },
+    {
+      "id": "developer_last_seen",
+      "key": "developer_last_seen",
+      "value": "1793778723957",
+      "description": "Timestamp heartbeat terakhir perangkat ArexansPay",
+      "created_at": "2026-11-04T07:52:03.958Z",
+      "updated_at": "2026-11-04T07:52:03.958Z"
+    },
+    {
+      "id": "heartbeat_timeout_seconds",
+      "key": "heartbeat_timeout_seconds",
+      "value": "180",
+      "description": "Ambang batas timeout heartbeat (detik)",
+      "created_at": "2026-11-04T07:51:56.864Z",
+      "updated_at": "2026-11-04T07:51:56.864Z"
+    },
+    {
+      "id": "payment_gateway_settings",
+      "key": "payment_gateway_settings",
+      "value": "{\"provider\":\"arexanspay\"}",
+      "description": "Setting Payment Gateway",
+      "created_at": "2026-11-04T07:51:56.864Z",
+      "updated_at": "2026-11-04T07:51:56.864Z"
+    },
+    {
+      "id": "enabled_gateways",
+      "key": "enabled_gateways",
+      "value": "[\"arexanspay\",\"xmpayment\",\"poketo\"]",
+      "description": "Gateway aktif",
+      "created_at": "2026-11-04T07:51:56.864Z",
+      "updated_at": "2026-11-04T07:51:56.864Z"
+    },
+    {
+      "id": "payment_gateway",
+      "key": "payment_gateway",
+      "value": "all",
+      "description": "Pilihan Gateway",
+      "created_at": "2026-11-04T07:51:56.864Z",
+      "updated_at": "2026-11-04T07:51:56.864Z"
+    },
+    {
+      "id": "license_keys",
+      "key": "license_keys",
+      "value": "[]",
+      "description": "License keys list",
+      "created_at": "2026-11-04T07:51:56.864Z",
+      "updated_at": "2026-11-04T07:51:56.864Z"
+    },
+    {
+      "id": "toko_scripts_catalog",
+      "key": "toko_scripts_catalog",
+      "value": "[]",
+      "description": "Catalog of Toko Scripts",
+      "created_at": "2026-11-04T07:51:56.864Z",
+      "updated_at": "2026-11-04T07:51:56.864Z"
+    },
+    {
+      "id": "toko_scripts_keys_data",
+      "key": "toko_scripts_keys_data",
+      "value": "[]",
+      "description": "Keys for Toko Scripts",
+      "created_at": "2026-11-04T07:51:56.864Z",
+      "updated_at": "2026-11-04T07:51:56.864Z"
+    },
+    {
+      "id": "arexanspay_device_info",
+      "key": "arexanspay_device_info",
+      "value": "{\"device_id\":\"arexans-phone\",\"device_name\":\"HP Owner ArexansPay\",\"battery\":null,\"network\":\"ONLINE\",\"ip\":\"127.0.0.1\",\"status\":\"online\",\"last_ping\":\"2026-11-04T07:52:03.957Z\",\"last_seen\":1793778723957}",
+      "updated_at": "2026-11-04T07:52:03.992Z",
+      "created_at": "2026-11-04T07:52:03.992Z"
+    }
+  ],
+  "ads": [],
+  "backgrounds": [],
+  "blocked_ips": [],
+  "developer_access_logs": [],
+  "duration_codes": [],
+  "lua_recording_events": [],
+  "lua_recordings": [],
+  "lua_script_versions": [],
   "lua_scripts": [
     {
       "id": "f1a10001-0001-4000-8000-000000000001",
@@ -48,5 +225,14 @@
       "created_at": "2026-10-31T12:44:23.122Z",
       "updated_at": "2026-10-31T12:44:23.122Z"
     }
-  ]
+  ],
+  "lua_teleports": [],
+  "package_discounts": [],
+  "social_links": [],
+  "transactions": [],
+  "users": [],
+  "xcoins_balances": [],
+  "xcoins_otp": [],
+  "xcoins_transactions": [],
+  "admin_sessions": []
 }
