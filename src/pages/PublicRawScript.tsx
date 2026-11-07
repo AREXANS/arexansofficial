@@ -45,8 +45,8 @@ export const PublicRawScript: React.FC = () => {
           }
         }
 
-        // Fallback to supabase edge function get-script
-        const resp = await fetch(`https://caecqqzbikmwroevvyrd.supabase.co/functions/v1/get-script?name=${id}&raw=1&public=1`);
+        // Fallback ke local database get-script function
+        const resp = await fetch(`/functions/v1/get-script?name=${encodeURIComponent(id)}&raw=1&public=1`);
         const text = await resp.text();
         setContent(text);
       } catch (err: any) {

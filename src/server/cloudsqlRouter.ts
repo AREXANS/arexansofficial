@@ -1686,7 +1686,7 @@ export async function handleFunctionsRequest(req: any, res: any): Promise<boolea
         return res.end(JSON.stringify({ success: true }));
       }
 
-      if (funcName === 'validate-key') {
+      if (funcName === 'validate-key' || funcName === 'validate-toko-script-key') {
         const { key: rawKey, productId, hwid, robloxUsername } = body;
         const key = (rawKey || '').trim().toUpperCase();
 

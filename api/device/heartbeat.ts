@@ -105,27 +105,7 @@ export default async function handler(req: any, res: any) {
       }
     }
 
-    // Persist to Supabase REST if credentials available in environment
-    const sbUrl = (process.env.SUPABASE_URL || 'https://caecqqzbikmwroevvyrd.supabase.co').replace(/\/+$/, '');
-    const sbKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY || 'sb_publishable_CnZ2j0kBnLgok3J8Tu9WAA_kR31dqWL';
-    if (sbUrl && sbKey) {
-      try {
-        fetch(`${sbUrl}/rest/v1/app_settings`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'apikey': sbKey,
-            'Authorization': `Bearer ${sbKey}`,
-            'Prefer': 'resolution=merge-duplicates'
-          },
-          body: JSON.stringify([
-            { key: 'developer_last_seen', value: lastSeenVal.toString(), updated_at: new Date().toISOString() },
-            { key: 'developer_device_online', value: isOffline ? 'false' : 'true', updated_at: new Date().toISOString() },
-            { key: 'arexanspay_device_info', value: JSON.stringify(deviceInfo), updated_at: new Date().toISOString() }
-          ])
-        }).catch(() => {});
-      } catch {}
-    }
+
 
     res.setHeader('Content-Type', 'application/json');
     res.statusCode = 200;
