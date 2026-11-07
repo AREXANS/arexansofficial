@@ -295,12 +295,12 @@ export function getTables(): Map<string, any[]> {
       if (existingIdx === -1) {
         loadedScripts.push({ ...def });
       } else {
-        // Selalu pastikan 4 default script Arexans Tools sinkron dengan file asli dari user
-        if (!loadedScripts[existingIdx].content || loadedScripts[existingIdx].content.length < 5000 || loadedScripts[existingIdx].display_name !== def.display_name) {
+        // Hanya isi jika script belum memiliki konten sama sekali
+        if (!loadedScripts[existingIdx].content || loadedScripts[existingIdx].content.trim() === '') {
           loadedScripts[existingIdx] = {
             ...loadedScripts[existingIdx],
-            display_name: def.display_name,
-            description: def.description,
+            display_name: loadedScripts[existingIdx].display_name || def.display_name,
+            description: loadedScripts[existingIdx].description || def.description,
             content: def.content,
             backup_content: def.backup_content,
             updated_at: new Date().toISOString()

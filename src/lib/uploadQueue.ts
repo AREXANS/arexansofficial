@@ -45,7 +45,14 @@ const pump = () => {
       last = now;
       patch(next.id, { progress: Math.max(0, Math.min(100, Math.round(progress))), ...(stage ? { stage } : {}) });
     })
-      .then(() => { patch(next.id, { status: 'done', progress: 100, stage: 'Selesai' }); r.onDone?.(); })
+      .then(() => {
+        patch(next.id, { status: 'done', progress: 100, stage: 'Selesai' });
+        r.onDone?.();
+        setTimeout(() => {
+          tasks = tasks.filter(t => t.id !== next.id);
+          emit();
+        }, 3000);
+      })
       .catch((e: any) => patch(next.id, { status: 'error', error: e?.message || String(e), stage: 'Gagal' }))
       .finally(() => { running--; runners.delete(next.id); pump(); });
   }
@@ -73,48 +80,111 @@ export const readFileWithProgress = (file: File, onProgress: (pct: number) => vo
 const REST_URL = '/rest/v1';
 const API_KEY = 'cloudsql-postgres-client-key';
 
-/** Send a row write to lua_scripts via XHR so we get real upload progress. */
+const getRestUrl = (filter: string | null) => {
+  const origin = typeof window !== 'undefined' && window.location?.origin ? window.location.origin : '';
+  return `${origin}${REST_URL}/lua_scripts${filter ? `?${filter}` : ''}`;
+};
+
+/** Send a row write to lua_scripts via direct XHR with upload progress and timeout safety */
 export const writeLuaScript = async (
   method: 'PATCH' | 'POST',
   body: Record<string, unknown>,
   filter: string | null,
   onProgress: (pct: number) => void,
-) => {
+): Promise<void> => {
   const { data } = await supabase.auth.getSession();
   const token = data.session?.access_token;
-  const url = `${REST_URL}/lua_scripts${filter ? `?${filter}` : ''}`;
+  const url = getRestUrl(filter);
   const auth = token ? `Bearer ${token}` : (!API_KEY.startsWith('sb_') ? `Bearer ${API_KEY}` : '');
-  // Serialize + upload inside a Web Worker so huge (50MB+) scripts never freeze the page.
-  await new Promise<void>((resolve, reject) => {
-    const w = getWorker();
-    const id = Math.random().toString(36).slice(2);
-    const onMsg = (e: MessageEvent) => {
-      const d = e.data; if (d.id !== id) return;
-      if (d.type === 'progress') onProgress(d.pct);
-      else {
-        w.removeEventListener('message', onMsg);
-        if (d.type === 'done') {
+
+  return new Promise<void>((resolve, reject) => {
+    try {
+      const xhr = new XMLHttpRequest();
+      let finished = false;
+
+      const timer = setTimeout(() => {
+        if (!finished) {
+          finished = true;
+          try { xhr.abort(); } catch {}
+          reject(new Error('Penyimpanan timeout (30s)'));
+        }
+      }, 30000);
+
+      xhr.open(method, url, true);
+      xhr.setRequestHeader('Content-Type', 'application/json');
+      xhr.setRequestHeader('apikey', API_KEY);
+      if (auth) xhr.setRequestHeader('Authorization', auth);
+      xhr.setRequestHeader('Prefer', 'return=minimal');
+
+      if (xhr.upload) {
+        xhr.upload.onprogress = (ev: ProgressEvent) => {
+          if (ev.lengthComputable && ev.total > 0) {
+            const pct = Math.min(99, Math.round((ev.loaded / ev.total) * 100));
+            onProgress(pct);
+          }
+        };
+      }
+
+      xhr.onload = () => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(timer);
+        if (xhr.status >= 200 && xhr.status < 300) {
+          onProgress(100);
           resolve();
         } else {
-          reject(new Error(d.error));
+          let errMsg = `HTTP ${xhr.status}`;
+          try {
+            const parsed = JSON.parse(xhr.responseText);
+            if (parsed.error) errMsg = parsed.error;
+          } catch {}
+          reject(new Error(errMsg));
         }
-      }
-    };
-    w.addEventListener('message', onMsg);
-    w.postMessage({ id, method, url, body, apiKey: API_KEY, auth });
+      };
+
+      xhr.onerror = () => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(timer);
+        // Fallback to direct fetch
+        fetch(url, {
+          method,
+          headers: {
+            'Content-Type': 'application/json',
+            'apikey': API_KEY,
+            ...(auth ? { 'Authorization': auth } : {}),
+            'Prefer': 'return=minimal'
+          },
+          body: JSON.stringify(body)
+        })
+          .then(async (res) => {
+            if (res.ok) {
+              onProgress(100);
+              resolve();
+            } else {
+              const err = await res.json().catch(() => ({}));
+              reject(new Error(err.error || `HTTP ${res.status}`));
+            }
+          })
+          .catch((fetchErr) => {
+            reject(new Error(fetchErr.message || 'Koneksi gagal saat menyimpan script'));
+          });
+      };
+
+      xhr.ontimeout = () => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(timer);
+        reject(new Error('Timeout saat menyimpan script'));
+      };
+
+      const payload = JSON.stringify(body);
+      xhr.send(payload);
+    } catch (err: any) {
+      reject(err);
+    }
   });
 };
-
-const WORKER_SRC = `self.onmessage=function(e){var m=e.data;var x=new XMLHttpRequest();x.open(m.method,m.url);
-x.setRequestHeader('apikey',m.apiKey);if(m.auth)x.setRequestHeader('Authorization',m.auth);
-x.setRequestHeader('Content-Type','application/json');x.setRequestHeader('Prefer','return=minimal');x.timeout=1800000;
-x.upload.onprogress=function(ev){if(ev.lengthComputable)postMessage({id:m.id,type:'progress',pct:ev.loaded/ev.total*100})};
-x.onload=function(){if(x.status>=200&&x.status<300)postMessage({id:m.id,type:'done'});else postMessage({id:m.id,type:'error',error:'HTTP '+x.status+': '+String(x.responseText).slice(0,200)})};
-x.onerror=function(){postMessage({id:m.id,type:'error',error:'Koneksi gagal'})};
-x.ontimeout=function(){postMessage({id:m.id,type:'error',error:'Timeout'})};
-x.send(new Blob([JSON.stringify(m.body)],{type:'application/json'}));};`;
-let worker: Worker | null = null;
-const getWorker = () => worker ??= new Worker(URL.createObjectURL(new Blob([WORKER_SRC], { type: 'text/javascript' })));
 
 /** Yield to the browser so heavy string work doesn't freeze the UI. */
 export const idle = () => new Promise<void>(r => setTimeout(r, 0));
